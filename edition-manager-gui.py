@@ -474,9 +474,9 @@ def create_gui():
     except:
         pass  # Skip if icon not available
     
-    # Configure style
+    # Configure style - FIX: Create ThemedStyle properly
     if THEMED_TK_AVAILABLE:
-        style = root.style
+        style = ThemedStyle(root)  # Fixed: Create ThemedStyle object
     else:
         style = ttk.Style()
     
