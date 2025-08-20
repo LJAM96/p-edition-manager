@@ -18,7 +18,7 @@ This tool is perfect for movie enthusiasts who want more detailed information ab
 
 # User-Friendly Operations:
 
-Simply run the GUI version
+Simply run the [GUI](https://github.com/Entree3k/Edition-Manager/blob/main/Edition%20Manager%20GUI.md) version
 ```
 python edition-manager-gui.py
 ```
