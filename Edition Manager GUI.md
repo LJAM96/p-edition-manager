@@ -3,7 +3,7 @@ This is just a basic guide on how to use the Edition Manager GUI
 ## Initial Launch
 When you first launch the GUI you will need to configure it for your Plex Server. Open the Settings 
 
-<img width="842" height="596" alt="image" src="https://github.com/user-attachments/assets/3bf54f8f-1fd2-4cdb-a95f-eb1f6113b800" />
+<img width="977" height="711" alt="image" src="https://github.com/user-attachments/assets/046ef5e9-ecf7-492a-97f8-060382899d1a" />
 
 ## Settings Menu
 
