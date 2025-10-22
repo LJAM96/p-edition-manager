@@ -1,646 +1,545 @@
-import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
-import subprocess
-import threading
-import queue
-import configparser
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Edition Manager — PySide6 / Qt (Material-inspired, Light mode only)
+
+- Keeps CLI contract with edition-manager.py: --all, --reset, --backup, --restore
+- Reads/writes ./config/config.ini with the same keys your script expects
+- Pure PySide6 (no qt-material .xml themes). We force a clean LIGHT palette and
+  apply a small stylesheet for cards, buttons, tabs, etc.
+
+Run:
+    pip install PySide6
+    python edition_manager_qt.py
+"""
+
 import os
-from pathlib import Path
 import sys
+import re
+import configparser
+from pathlib import Path
 
-# Check if ttkthemes is available, if not, we'll use the default theme
-try:
-    from ttkthemes import ThemedTk, ThemedStyle
-    THEMED_TK_AVAILABLE = True
-except ImportError:
-    THEMED_TK_AVAILABLE = False
+from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtCore import Qt
 
-class ModernFramedFrame(ttk.Frame):
-    """A modern frame with a subtle border and background"""
-    def __init__(self, master, **kwargs):
-        if 'padding' not in kwargs:
-            kwargs['padding'] = (10, 10)
-        if 'relief' not in kwargs:
-            kwargs['relief'] = 'flat'
-        super().__init__(master, **kwargs)
+APP_TITLE = "Edition Manager"
+APP_VERSION = "v1.8 - Visual Update"
+PRIMARY_SCRIPT = "edition-manager.py"
+CONFIG_FILE = str(Path(__file__).parent / "config" / "config.ini")
 
-class DragDropListbox(tk.Listbox):
-    """ A Listbox with drag-and-drop reordering """
-    
-    def __init__(self, master, **kw):
-        super().__init__(master, **kw)
-        self.bind('<Button-1>', self.start_drag)
-        self.bind('<B1-Motion>', self.during_drag)
-        self.bind('<ButtonRelease-1>', self.stop_drag)
-        
-        self.drag_start_index = None
-        self.drag_end_index = None
-        self.being_dragged = False
-        self.update_callback = None
-        
-    def start_drag(self, event):
-        # Get the index of the clicked item
-        self.drag_start_index = self.nearest(event.y)
-        
-        # Make sure we clicked on an item
-        if self.drag_start_index < 0 or self.drag_start_index >= self.size():
+DEFAULT_MODULES = [
+    "Resolution", "Duration", "Rating", "Cut", "Release", "DynamicRange",
+    "Country", "ContentRating", "Language", "AudioChannels", "Director",
+    "Genre", "SpecialFeatures", "Studio", "AudioCodec", "Bitrate",
+    "FrameRate", "Size", "Source", "VideoCodec",
+]
+
+# ---------------------------
+# Light palette helper (no external themes)
+# ---------------------------
+
+def apply_light_palette(app: QtWidgets.QApplication, primary_color: str = "#6750A4") -> None:
+    app.setStyle("Fusion")  # modern, consistent base
+    pal = QtGui.QPalette()
+    pal.setColor(QtGui.QPalette.Window,        QtGui.QColor("#F6F6FA"))
+    pal.setColor(QtGui.QPalette.WindowText,    QtGui.QColor(20, 18, 26))
+    pal.setColor(QtGui.QPalette.Base,          QtGui.QColor("#FFFFFF"))
+    pal.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor("#F4F4F8"))
+    pal.setColor(QtGui.QPalette.ToolTipBase,   QtGui.QColor("#FFFFFF"))
+    pal.setColor(QtGui.QPalette.ToolTipText,   QtGui.QColor(20, 18, 26))
+    pal.setColor(QtGui.QPalette.Text,          QtGui.QColor(20, 18, 26))
+    pal.setColor(QtGui.QPalette.Button,        QtGui.QColor("#FFFFFF"))
+    pal.setColor(QtGui.QPalette.ButtonText,    QtGui.QColor(20, 18, 26))
+    pal.setColor(QtGui.QPalette.BrightText,    QtCore.Qt.red)
+    pal.setColor(QtGui.QPalette.Highlight,     QtGui.QColor(primary_color))  # primary
+    pal.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor("#FFFFFF"))
+    app.setPalette(pal)
+
+
+# ---------------------------
+# Process worker
+# ---------------------------
+class ProcessWorker(QtCore.QObject):
+    """Run the CLI and stream output."""
+    started = QtCore.Signal()
+    line = QtCore.Signal(str)
+    progress = QtCore.Signal(int)
+    finished = QtCore.Signal(int)
+
+    def __init__(self, flag: str, parent=None):
+        super().__init__(parent)
+        self.flag = flag
+        self.proc = QtCore.QProcess(self)
+        self.proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
+        self.proc.readyReadStandardOutput.connect(self._read)
+        self.proc.finished.connect(self._done)
+
+    def start(self):
+        self.started.emit()
+        python = sys.executable or "python3"
+        script_path = str(Path(__file__).parent / PRIMARY_SCRIPT)
+        if not os.path.exists(script_path):
+            self.line.emit(f"Error: '{PRIMARY_SCRIPT}' not found next to GUI.")
+            self.finished.emit(1)
             return
-            
-        # Store the item we're dragging
-        self.being_dragged = True
+        args = [script_path, self.flag]
+        self.line.emit("Running: {} {}".format(python, " ".join(args)))
+        self.proc.start(python, args)
+
+    @QtCore.Slot()
+    def _read(self):
+        data = self.proc.readAllStandardOutput().data().decode(errors="replace")
+        for raw in data.splitlines():
+            s = raw.rstrip("\n")
+            self.line.emit(s)
+            if s.startswith("PROGRESS "):
+                try:
+                    pct = int(s.split()[1])
+                    pct = max(0, min(100, pct))
+                    self.progress.emit(pct)
+                except Exception:
+                    pass
+
+    @QtCore.Slot(int, QtCore.QProcess.ExitStatus)
+    def _done(self, code: int, _status):
+        self.finished.emit(code)
+
+
+# ---------------------------
+# Modules list (checkbox + drag)
+# ---------------------------
+class ModulesList(QtWidgets.QListWidget):
+    """Checkbox list with drag-to-reorder."""
+    def __init__(self, modules: list[str], enabled_order: list[str], parent=None):
+        super().__init__(parent)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
+        self.setAlternatingRowColors(True)
+        # Fill items: enabled first (in provided order), then the rest alpha
+        enabled = [m for m in enabled_order if m in modules]
+        disabled = [m for m in modules if m not in enabled]
+        for m in enabled + disabled:
+            it = QtWidgets.QListWidgetItem(m, self)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            it.setCheckState(Qt.Checked if m in enabled else Qt.Unchecked)
+
+    def enabled_modules_in_order(self) -> list[str]:
+        out = []
+        for i in range(self.count()):
+            it = self.item(i)
+            if it.checkState() == Qt.Checked:
+                out.append(it.text())
+        return out
+
+
+# ---------------------------
+# Settings dialog
+# ---------------------------
+class SettingsDialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.resize(720, 560)
+        vbox = QtWidgets.QVBoxLayout(self)
+        vbox.setContentsMargins(12, 12, 12, 12)
         
-    def during_drag(self, event):
-        if not self.being_dragged:
+        # Header / App Bar (simple)
+        header = QtWidgets.QLabel("Settings")
+        header.setObjectName("SectionHeaderBig")
+        vbox.addWidget(header)
+
+        tabs = QtWidgets.QTabWidget()
+        vbox.addWidget(tabs, 1)
+
+        # Prepare config
+        self.cfg = configparser.ConfigParser()
+        if os.path.exists(CONFIG_FILE):
+            self.cfg.read(CONFIG_FILE)
+        for sec in ("server","modules","language","rating","performance","appearance"):
+            if not self.cfg.has_section(sec):
+                self.cfg.add_section(sec)
+
+        # --- Server tab ---
+        server = QtWidgets.QWidget(); tabs.addTab(server, "Server")
+        form = QtWidgets.QFormLayout(server)
+        form.setHorizontalSpacing(14); form.setVerticalSpacing(8)
+        self.server_address = QtWidgets.QLineEdit(self.cfg.get("server","address", fallback=""))
+        self.server_token = QtWidgets.QLineEdit(self.cfg.get("server","token", fallback=""))
+        self.server_token.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.skip_libraries = QtWidgets.QLineEdit(self.cfg.get("server","skip_libraries", fallback=""))
+        form.addRow("Server URL", self.server_address)
+        form.addRow(QtWidgets.QLabel("e.g., http://127.0.0.1:32400"))
+        form.addRow("Token", self.server_token)
+        form.addRow("Skip Libraries", self.skip_libraries)
+        form.addRow(QtWidgets.QLabel("Use semicolons to separate library names"))
+
+        # --- Modules tab ---
+        modules_tab = QtWidgets.QWidget(); tabs.addTab(modules_tab, "Modules")
+        m_v = QtWidgets.QVBoxLayout(modules_tab)
+        m_v.setContentsMargins(8, 8, 8, 8)
+        m_v.addWidget(QtWidgets.QLabel("Drag to reorder. Check to enable. Enabled run top-to-bottom."))
+        current_order = [m for m in re.split(r"[;]", self.cfg.get("modules","order", fallback="")) if m]
+        self.modules_list = ModulesList(DEFAULT_MODULES, current_order)
+        m_v.addWidget(self.modules_list, 1)
+
+        # --- Language tab ---
+        lang_tab = QtWidgets.QWidget(); tabs.addTab(lang_tab, "Language")
+        lf = QtWidgets.QFormLayout(lang_tab)
+        lf.setHorizontalSpacing(14); lf.setVerticalSpacing(8)
+        self.excluded_languages = QtWidgets.QLineEdit(self.cfg.get("language","excluded_languages", fallback=""))
+        self.skip_multiple = QtWidgets.QCheckBox("Skip Multiple Audio Tracks")
+        self.skip_multiple.setChecked(self.cfg.getboolean("language","skip_multiple_audio_tracks", fallback=False))
+        lf.addRow("Excluded Languages", self.excluded_languages)
+        lf.addRow(QtWidgets.QLabel("Use commas to separate languages"))
+        lf.addRow("", self.skip_multiple)
+
+        # --- Rating tab ---
+        rating_tab = QtWidgets.QWidget(); tabs.addTab(rating_tab, "Rating")
+        rf = QtWidgets.QFormLayout(rating_tab)
+        rf.setHorizontalSpacing(14); rf.setVerticalSpacing(10)
+
+        src_box = QtWidgets.QWidget(); src_layout = QtWidgets.QHBoxLayout(src_box)
+        src_layout.setContentsMargins(0,0,0,0); src_layout.setSpacing(12)
+        self.src_imdb = QtWidgets.QRadioButton("IMDB")
+        self.src_rt   = QtWidgets.QRadioButton("Rotten Tomatoes")
+        src_layout.addWidget(self.src_imdb)
+        src_layout.addWidget(self.src_rt)
+        src_layout.addStretch(1)
+        _src_val = self.cfg.get("rating","source", fallback="imdb").strip().lower()
+        (self.src_imdb if _src_val == "imdb" else self.src_rt).setChecked(True)
+        rf.addRow("Rating Source", src_box)
+
+        rt_box = QtWidgets.QWidget(); rt_layout = QtWidgets.QHBoxLayout(rt_box)
+        rt_layout.setContentsMargins(0,0,0,0); rt_layout.setSpacing(12)
+        self.rt_critics  = QtWidgets.QRadioButton("Critics")
+        self.rt_audience = QtWidgets.QRadioButton("Audiences")
+        rt_layout.addWidget(self.rt_critics)
+        rt_layout.addWidget(self.rt_audience)
+        rt_layout.addStretch(1)
+        _rt_val = self.cfg.get("rating","rotten_tomatoes_type", fallback="critic").strip().lower()
+        (self.rt_critics if _rt_val == "critic" else self.rt_audience).setChecked(True)
+        rf.addRow("Rotten Tomatoes Type", rt_box)
+        rf.addRow(QtWidgets.QLabel("Rotten Tomatoes type is used only when the source is Rotten Tomatoes."))
+
+        # --- Performance tab ---
+        perf_tab = QtWidgets.QWidget(); tabs.addTab(perf_tab, "Performance")
+        pf = QtWidgets.QFormLayout(perf_tab)
+        pf.setHorizontalSpacing(14); pf.setVerticalSpacing(8)
+        self.max_workers = QtWidgets.QSpinBox(); self.max_workers.setRange(1, 256)
+        self.max_workers.setValue(int(self.cfg.get("performance","max_workers", fallback="10")))
+        self.batch_size = QtWidgets.QSpinBox(); self.batch_size.setRange(1, 5000)
+        self.batch_size.setValue(int(self.cfg.get("performance","batch_size", fallback="25")))
+        pf.addRow("Max Workers", self.max_workers)
+        pf.addRow("Batch Size", self.batch_size)
+
+        # --- Appearance tab (NEW) ---
+        appearance_tab = QtWidgets.QWidget(); tabs.addTab(appearance_tab, "Appearance")
+        af = QtWidgets.QFormLayout(appearance_tab)
+        af.setHorizontalSpacing(14); af.setVerticalSpacing(8)
+        current_color = self.cfg.get("appearance", "primary_color", fallback="#6750A4")
+        self.primary_color_btn = QtWidgets.QPushButton("Select Primary Color…")
+        self.primary_color_display = QtWidgets.QLabel(current_color)
+        self.primary_color_display.setMinimumWidth(90)
+        self.primary_color_display.setAlignment(Qt.AlignCenter)
+        self.primary_color_display.setStyleSheet(
+            f"background-color: {current_color}; border: 1px solid #CAC4D0; border-radius: 6px; padding: 6px;")
+        self.primary_color_btn.clicked.connect(self.choose_primary_color)
+        af.addRow("Primary Highlight Color", self.primary_color_btn)
+        af.addRow("Current Color", self.primary_color_display)
+
+        # Footer buttons
+        btn_box = QtWidgets.QDialogButtonBox()
+        self.btn_save = btn_box.addButton("Save", QtWidgets.QDialogButtonBox.AcceptRole)
+        btn_box.addButton("Cancel", QtWidgets.QDialogButtonBox.RejectRole)
+        vbox.addWidget(btn_box)
+        btn_box.accepted.connect(self.on_save)
+        btn_box.rejected.connect(self.reject)
+
+    def choose_primary_color(self):
+        color = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.primary_color_display.text()), self, "Select Primary Color")
+        if color.isValid():
+            hex_color = color.name()
+            self.primary_color_display.setText(hex_color)
+            self.primary_color_display.setStyleSheet(
+                f"background-color: {hex_color}; border: 1px solid #CAC4D0; border-radius: 6px; padding: 6px;")
+
+    def on_save(self):
+        # server
+        self.cfg.set("server", "address", self.server_address.text().strip())
+        self.cfg.set("server", "token", self.server_token.text().strip())
+        self.cfg.set("server", "skip_libraries", self.skip_libraries.text().strip())
+        # modules
+        self.cfg.set("modules", "order", ";".join(self.modules_list.enabled_modules_in_order()))
+        # language
+        self.cfg.set("language", "excluded_languages", self.excluded_languages.text().strip())
+        self.cfg.set("language", "skip_multiple_audio_tracks", "yes" if self.skip_multiple.isChecked() else "no")
+        # rating
+        src_val = "imdb" if self.src_imdb.isChecked() else "rotten_tomatoes"
+        rt_val = "critic" if self.rt_critics.isChecked() else "audience"
+        self.cfg.set("rating", "source", src_val)
+        self.cfg.set("rating", "rotten_tomatoes_type", rt_val)
+        # performance
+        self.cfg.set("performance", "max_workers", str(self.max_workers.value()))
+        self.cfg.set("performance", "batch_size", str(self.batch_size.value()))
+        # appearance (NEW)
+        self.cfg.set("appearance", "primary_color", self.primary_color_display.text().strip())
+
+        os.makedirs(Path(CONFIG_FILE).parent, exist_ok=True)
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            self.cfg.write(f)
+        self.accept()
+
+
+# ---------------------------
+# Main window
+# ---------------------------
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self):
+        super().__init__()
+        # Read chosen primary color for stylesheet accents
+        self.cfg = configparser.ConfigParser()
+        if os.path.exists(CONFIG_FILE):
+            self.cfg.read(CONFIG_FILE)
+        self.primary_color = self.cfg.get("appearance", "primary_color", fallback="#6750A4")
+
+        self.setWindowTitle(f"{APP_TITLE} for Plex")
+        self.resize(980, 720)
+
+        central = QtWidgets.QWidget(); self.setCentralWidget(central)
+        root = QtWidgets.QVBoxLayout(central)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        # ---- App Bar (visual) ----
+        bar = QtWidgets.QFrame()
+        bar.setObjectName("AppBar")
+        bar_layout = QtWidgets.QHBoxLayout(bar)
+        bar_layout.setContentsMargins(14, 10, 14, 10)
+        title_lab = QtWidgets.QLabel(APP_TITLE); title_lab.setObjectName("AppTitle")
+        ver_lab = QtWidgets.QLabel(APP_VERSION); ver_lab.setObjectName("AppVersion")
+        bar_layout.addWidget(title_lab); bar_layout.addSpacing(8); bar_layout.addWidget(ver_lab); bar_layout.addStretch(1)
+        root.addWidget(bar)
+
+        # ---- Section: Actions ----
+        actions_header = QtWidgets.QLabel("Actions"); actions_header.setObjectName("SectionTitle")
+        root.addWidget(actions_header)
+        actions_group = QtWidgets.QGroupBox(); actions_group.setObjectName("Card"); actions_group.setTitle("")
+        ag = QtWidgets.QGridLayout(actions_group)
+        ag.setContentsMargins(16, 16, 16, 16)
+        ag.setHorizontalSpacing(10)
+
+        self.btn_all = QtWidgets.QPushButton("Process All Movies"); self.btn_all.setObjectName("Primary")
+        self.btn_reset = QtWidgets.QPushButton("Reset All Movies"); self.btn_reset.setObjectName("Outlined")
+        self.btn_backup = QtWidgets.QPushButton("Backup Editions"); self.btn_backup.setObjectName("Outlined")
+        self.btn_restore = QtWidgets.QPushButton("Restore Editions"); self.btn_restore.setObjectName("Outlined")
+        self.btn_settings = QtWidgets.QPushButton("Settings"); self.btn_settings.setObjectName("Outlined")
+
+        ag.addWidget(self.btn_all,    0, 0)
+        ag.addWidget(self.btn_reset,  0, 1)
+        ag.addWidget(self.btn_backup, 0, 2)
+        ag.addWidget(self.btn_restore,0, 3)
+        ag.addWidget(self.btn_settings,0,4)
+        root.addWidget(actions_group)
+
+        # ---- Section: Progress ----
+        prog_header = QtWidgets.QLabel("Progress"); prog_header.setObjectName("SectionTitle")
+        root.addWidget(prog_header)
+        prog_group = QtWidgets.QGroupBox(); prog_group.setObjectName("Card"); prog_group.setTitle("")
+        pg = QtWidgets.QGridLayout(prog_group)
+        pg.setContentsMargins(16, 16, 16, 16)
+        self.progress = QtWidgets.QProgressBar(); self.progress.setRange(0, 100); self.progress.setValue(0)
+        self.percent_lab = QtWidgets.QLabel("0%")
+        pg.addWidget(self.progress, 0, 0, 1, 1)
+        pg.addWidget(self.percent_lab, 1, 0, 1, 1, alignment=Qt.AlignLeft)
+        root.addWidget(prog_group)
+
+        # ---- Section: Status ----
+        status_header = QtWidgets.QLabel("Status"); status_header.setObjectName("SectionTitle")
+        root.addWidget(status_header)
+        status_group = QtWidgets.QGroupBox(); status_group.setObjectName("Card"); status_group.setTitle("")
+        sg = QtWidgets.QGridLayout(status_group)
+        sg.setContentsMargins(16, 16, 16, 16)
+        self.status = QtWidgets.QPlainTextEdit(); self.status.setReadOnly(True); self.status.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        mono = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont); mono.setPointSize(10)
+        self.status.setFont(mono)
+        sg.addWidget(self.status, 0, 0, 1, 1)
+        self.btn_clear = QtWidgets.QPushButton("Clear Status"); self.btn_clear.setObjectName("Text")
+        sg.addWidget(self.btn_clear, 1, 0, 1, 1, alignment=Qt.AlignRight)
+        root.addWidget(status_group, 1)
+
+        # Footer
+        foot = QtWidgets.QHBoxLayout(); root.addLayout(foot)
+        foot.addStretch(1)
+        pyver = ".".join(map(str, sys.version_info[:3]))
+        foot.addWidget(QtWidgets.QLabel(f"{APP_TITLE} • Python {pyver}"))
+
+        # Shadows for cards
+        for g in (actions_group, prog_group, status_group):
+            self._add_shadow(g)
+
+        # Wiring
+        self.btn_clear.clicked.connect(lambda: self.status.setPlainText(""))
+        self.btn_settings.clicked.connect(self.open_settings)
+        self.btn_all.clicked.connect(lambda: self.run_flag("--all"))
+        self.btn_reset.clicked.connect(lambda: self.run_flag("--reset"))
+        self.btn_backup.clicked.connect(lambda: self.run_flag("--backup"))
+        self.btn_restore.clicked.connect(lambda: self.run_flag("--restore"))
+
+        # Timer to update percent label
+        self._percent_timer = QtCore.QTimer(self)
+        self._percent_timer.timeout.connect(self._update_percent)
+        self._percent_timer.start(120)
+
+        self._current_worker = None
+
+        # Apply local style sheet for polish (light-only) with dynamic color
+        self._apply_light_styles()
+
+    # ---- Styling helpers ----
+    def _add_shadow(self, widget, radius=18, opacity=0.20, offset=(0, 4)):
+        eff = QtWidgets.QGraphicsDropShadowEffect(widget)
+        eff.setBlurRadius(radius)
+        eff.setColor(QtGui.QColor(0, 0, 0, int(255 * opacity)))
+        eff.setOffset(*offset)
+        widget.setGraphicsEffect(eff)
+
+    def _apply_light_styles(self):
+        c = self.primary_color
+        # Slightly darker for hover/disabled states
+        def darken(hex_color, factor=0.15):
+            col = QtGui.QColor(hex_color)
+            r, g, b = col.red(), col.green(), col.blue()
+            r = max(0, int(r * (1 - factor)))
+            g = max(0, int(g * (1 - factor)))
+            b = max(0, int(b * (1 - factor)))
+            return f"#{r:02x}{g:02x}{b:02x}"
+        hover = darken(c, 0.12)
+        disabled = darken(c, 0.40)
+
+        self.setStyleSheet(self.styleSheet() + f"""
+            QLabel#AppTitle {{ font-size: 20pt; font-weight: 700; letter-spacing: .2px; color: #FFFFFF; }}
+            QLabel#AppVersion {{ color: rgba(255,255,255,.95); font-size: 10pt; }}
+            QLabel#SectionHeaderBig {{ font-size: 16pt; font-weight: 700; margin: 2px 0 10px 2px; color: rgba(0,0,0,.84); }}
+            QLabel#SectionTitle {{ margin-top: 8px; margin-bottom: 6px; font-size: 12pt; font-weight: 600; color: rgba(0,0,0,.60); }}
+
+            QFrame#AppBar {{ background: {c}; border-radius: 10px; }}
+
+            QGroupBox#Card {{ background: #FFFFFF; border: 1px solid #E5E5EC; border-radius: 12px; padding: 6px; margin-top: 0px; }}
+
+            QPushButton {{ padding: 8px 14px; border-radius: 8px; font-weight: 600; }}
+            QPushButton#Primary {{ background: {c}; color: #FFFFFF; border: none; }}
+            QPushButton#Primary:hover {{ background: {hover}; }}
+            QPushButton#Primary:disabled {{ background: {disabled}; color: #FFFFFF; }}
+
+            QPushButton#Outlined {{ background: #FFFFFF; color: #1D1B20; border: 1px solid #CAC4D0; }}
+            QPushButton#Outlined:hover {{ background: #F4EFF7; }}
+
+            QPushButton#Text {{ background: transparent; color: {c}; border: none; padding: 6px 10px; }}
+            QPushButton#Text:hover {{ background: #EEE6F7; border-radius: 6px; }}
+
+            QProgressBar {{ border: 1px solid #E5E5EC; border-radius: 8px; background: #F4F4F8; height: 14px; color: rgba(0,0,0,.65); text-align: center; }}
+            QProgressBar::chunk {{ background-color: {c}; border-radius: 8px; }}
+
+            QPlainTextEdit {{ background: #FAFAFD; border: 1px solid #E5E5EC; border-radius: 8px; padding: 8px; color: rgba(0,0,0,.84); }}
+
+            QTabWidget::pane {{ border: 1px solid #E5E5EC; border-radius: 10px; padding: 6px; background: #FFFFFF; }}
+            QTabBar::tab {{ padding: 8px 14px; margin: 2px; border-radius: 8px; background: #F6F2FB; color: #3A3650; border: 1px solid transparent; font-weight: 600; }}
+            QTabBar::tab:selected {{ background: #FFFFFF; border-color: #CAC4D0; }}
+        """)
+
+    # --- Settings ---
+    def open_settings(self):
+        dlg = SettingsDialog(self)
+        before = self.primary_color
+        if dlg.exec():  # if saved
+            # If color changed, persist immediately in UI without restart
+            self.cfg.read(CONFIG_FILE)
+            self.primary_color = self.cfg.get("appearance", "primary_color", fallback=before)
+            self._apply_light_styles()
+            # Also update the app palette highlight so selection bars match
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                apply_light_palette(app, self.primary_color)
+
+    # --- Process execution ---
+    def run_flag(self, flag: str):
+        if self._current_worker is not None:
             return
-            
-        # Get current position
-        current_index = self.nearest(event.y)
-        
-        # Make sure we're over a valid position
-        if current_index < 0 or current_index >= self.size():
-            return
-            
-        # Save current drag position for drop
-        self.drag_end_index = current_index
-        
-        # Visual feedback - draw a line where item will be inserted
-        self.delete('insertion_line')
-        y_coord = self.bbox(current_index)[1]
-        if current_index > self.drag_start_index:
-            # Line below item
-            y_coord += self.bbox(current_index)[3]
-        self.create_line(0, y_coord, self.winfo_width(), y_coord, 
-                         tag='insertion_line', fill='#3498db', width=2)
-        
-    def stop_drag(self, event):
-        if not self.being_dragged:
-            return
-            
-        # Check if checkbox part of item was clicked
-        item_x = event.x
-        if item_x < 25:  # Approximately where checkbox is
-            # Handle checkbox toggle instead of drag-drop
-            self.toggle_checkbox(self.drag_start_index)
-            self.being_dragged = False
-            self.delete('insertion_line')
-            return
-            
-        # Check if we have a valid drop position
-        if self.drag_end_index is not None and self.drag_start_index != self.drag_end_index:
-            # Get the item being moved
-            item_text = self.get(self.drag_start_index)
-            
-            # Remove it from original position
-            self.delete(self.drag_start_index)
-            
-            # Insert at new position
-            if self.drag_end_index > self.drag_start_index:
-                # Adjust index since we removed an item
-                self.drag_end_index -= 1
-            
-            self.insert(self.drag_end_index, item_text)
-            self.selection_set(self.drag_end_index)
-        
-        # Clean up
-        self.being_dragged = False
-        self.drag_start_index = None
-        self.drag_end_index = None
-        self.delete('insertion_line')
-        
-        # Always call the update callback after drag operations
-        if self.update_callback:
-            self.update_callback()
-            
-    def toggle_checkbox(self, index):
-        """Toggle the checkbox at the given index"""
-        if index < 0 or index >= self.size():
-            return
-            
-        item_text = self.get(index)
-        if item_text.startswith("[✓]"):
-            # Currently checked, uncheck it
-            new_text = "[ ]" + item_text[3:]
+        self._set_buttons_enabled(False)
+
+        self._current_worker = ProcessWorker(flag)
+        self._current_worker.line.connect(self.append_status)
+        self._current_worker.progress.connect(self.set_progress)
+        self._current_worker.started.connect(self._on_started)
+        self._current_worker.finished.connect(self._on_finished)
+
+        QtCore.QTimer.singleShot(0, self._current_worker.start)
+
+    @QtCore.Slot()
+    def _on_started(self):
+        self.progress.setRange(0, 0)  # indeterminate until we see PROGRESS
+
+    @QtCore.Slot(int)
+    def _on_finished(self, code: int):
+        self._current_worker = None
+        self._set_buttons_enabled(True)
+        if self.progress.maximum() == 0:
+            self.progress.setRange(0, 100)
+        if code == 0:
+            self.set_progress(100)
+            self.append_status("Completed successfully.")
         else:
-            # Currently unchecked, check it
-            new_text = "[✓]" + item_text[3:]
-            
-        self.delete(index)
-        self.insert(index, new_text)
-        self.selection_set(index)
-        
-        # Call the update callback
-        if self.update_callback:
-            self.update_callback()
+            self.append_status(f"Exited with code {code}.")
 
-    def get_enabled_modules(self):
-        """Get a list of enabled modules in their current order"""
-        enabled_modules = []
-        for i in range(self.size()):
-            item_text = self.get(i)
-            if item_text.startswith("[✓]"):
-                # Extract module name (remove checkbox part)
-                module_name = item_text[4:].strip()
-                enabled_modules.append(module_name)
-        return enabled_modules
+    @QtCore.Slot(int)
+    def set_progress(self, value: int):
+        if self.progress.maximum() == 0:
+            self.progress.setRange(0, 100)
+        value = max(0, min(100, value))
+        self.progress.setValue(value)
 
-class StatusUpdater:
-    def __init__(self, queue):
-        self.queue = queue
-    
-    def write(self, message):
-        self.queue.put(message)
-    
-    def flush(self):
-        pass
-
-def run_command_with_progress(command, progress_var, status_queue, button_states):
-    try:
-        # Disable all buttons during processing
-        for button in button_states:
-            button.config(state=tk.DISABLED)
-        
-        progress_var.set(0)
-        process = subprocess.Popen(
-            ["python", "edition-manager.py", command],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            bufsize=1
-        )
-        
-        # Process output line by line
-        for line in iter(process.stdout.readline, ''):
-            status_queue.put(line.strip())
-            
-            # Update progress bar for specific operations
-            if "[" in line and "]" in line:
-                # We're parsing log lines like: [2023-01-01 12:34:56] Processing...
-                
-                # For operations that have known total counts
-                if "Movie count:" in line:
-                    total_movies = int(line.split("Movie count:")[1].strip())
-                    # Store total_movies for progress calculation
-                    status_queue.put(f"TOTAL:{total_movies}")
-                elif any(movie_title in line for movie_title in [":", "Cleared", "Reset"]):
-                    # This is a movie being processed - increment progress
-                    status_queue.put("INCREMENT")
-        
-        process.wait()
-        status_queue.put("DONE")
-        
-        if process.returncode == 0:
-            status_queue.put("Command executed successfully.")
+    def _update_percent(self):
+        if self.progress.maximum() == 0:
+            self.percent_lab.setText("…")
         else:
-            status_queue.put(f"Error executing command (code {process.returncode}).")
-            
-    except Exception as e:
-        status_queue.put(f"An error occurred: {str(e)}")
-    finally:
-        # Re-enable all buttons
-        for button in button_states:
-            button.config(state=tk.NORMAL)
+            self.percent_lab.setText(f"{self.progress.value()}%")
 
-def update_status(status_text, status_queue, progress_var, progress_bar, total_items, current_item):
-    try:
-        while not status_queue.empty():
-            message = status_queue.get_nowait()
-            
-            if message == "DONE":
-                progress_var.set(100)  # Ensure it shows 100% when complete
-            elif message.startswith("TOTAL:"):
-                total_items[0] = int(message.split(":")[1])
-                current_item[0] = 0
-            elif message == "INCREMENT":
-                current_item[0] += 1
-                if total_items[0] > 0:
-                    progress_percent = min(100, int(current_item[0] / total_items[0] * 100))
-                    progress_var.set(progress_percent)
-                    progress_bar.update()
-            else:
-                status_text.configure(state=tk.NORMAL)
-                status_text.insert(tk.END, message + "\n")
-                status_text.see(tk.END)  # Scroll to the end
-                status_text.configure(state=tk.DISABLED)
-    except Exception as e:
-        print(f"Error updating status: {str(e)}")
-    
-    # Schedule next update
-    status_text.after(100, update_status, status_text, status_queue, progress_var, progress_bar, total_items, current_item)
+    @QtCore.Slot(str)
+    def append_status(self, text: str):
+        self.status.appendPlainText(text)
+        self.status.verticalScrollBar().setValue(self.status.verticalScrollBar().maximum())
 
-def load_config():
-    config_path = Path(__file__).parent / 'config' / 'config.ini'
-    config = configparser.ConfigParser()
-    config.read(config_path)
-    return config, config_path
+    def _set_buttons_enabled(self, enabled: bool):
+        for b in (self.btn_all, self.btn_reset, self.btn_backup, self.btn_restore, self.btn_settings):
+            b.setEnabled(enabled)
 
-def save_config(config, config_path):
-    with open(config_path, 'w') as configfile:
-        config.write(configfile)
-    messagebox.showinfo("Success", "Configuration saved successfully!")
 
-def open_settings_window(root):
-    config, config_path = load_config()
-    
-    # Create settings window
-    settings_window = tk.Toplevel(root)
-    settings_window.title("Edition Manager Settings")
-    settings_window.geometry("600x480")
-    settings_window.grab_set()  # Make window modal
-    
-    # Add icon if available
-    try:
-        settings_window.iconbitmap("icon.ico")
-    except:
-        pass  # Skip if icon not available
-    
-    # Apply style
-    if THEMED_TK_AVAILABLE:
-        style = ThemedStyle(settings_window)
-        # We'll keep using the same theme as the main window
-    
-    # Create notebook (tabs)
-    notebook = ttk.Notebook(settings_window)
-    notebook.pack(fill='both', expand=True, padx=15, pady=15)
-    
-    # Server settings tab
-    server_frame = ModernFramedFrame(notebook)
-    notebook.add(server_frame, text='Server')
-    
-    # Module settings tab
-    modules_frame = ModernFramedFrame(notebook)
-    notebook.add(modules_frame, text='Modules')
-    
-    # Language settings tab
-    language_frame = ModernFramedFrame(notebook)
-    notebook.add(language_frame, text='Language')
-    
-    # Rating settings tab
-    rating_frame = ModernFramedFrame(notebook)
-    notebook.add(rating_frame, text='Rating')
-    
-    # Performance settings tab
-    performance_frame = ModernFramedFrame(notebook)
-    notebook.add(performance_frame, text='Performance')
-    
-    # Server settings
-    ttk.Label(server_frame, text="Server Address:", font=('', 10, 'bold')).grid(row=0, column=0, sticky=tk.W, padx=5, pady=10)
-    server_address = ttk.Entry(server_frame, width=40)
-    server_address.grid(row=0, column=1, sticky=tk.W, padx=5, pady=10)
-    server_address.insert(0, config.get('server', 'address', fallback=''))
-    
-    ttk.Label(server_frame, text="Server Token:", font=('', 10, 'bold')).grid(row=1, column=0, sticky=tk.W, padx=5, pady=10)
-    server_token = ttk.Entry(server_frame, width=40)
-    server_token.grid(row=1, column=1, sticky=tk.W, padx=5, pady=10)
-    server_token.insert(0, config.get('server', 'token', fallback=''))
-    
-    ttk.Label(server_frame, text="Skip Libraries:", font=('', 10, 'bold')).grid(row=2, column=0, sticky=tk.W, padx=5, pady=10)
-    skip_libraries = ttk.Entry(server_frame, width=40)
-    skip_libraries.grid(row=2, column=1, sticky=tk.W, padx=5, pady=10)
-    skip_libraries.insert(0, config.get('server', 'skip_libraries', fallback=''))
-    ttk.Label(server_frame, text="Use semicolons to separate library names", 
-              font=('', 8), foreground="#666").grid(row=3, column=1, sticky=tk.W, padx=5)
-    
-    # Module settings with drag-and-drop list
-    ttk.Label(modules_frame, text="Module Order", font=('', 12, 'bold')).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 5))
-    
-    # Instructions label
-    info_frame = ttk.Frame(modules_frame)
-    info_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W+tk.E, padx=5, pady=5)
-    
-    instruction_label = ttk.Label(
-        info_frame, 
-        text="• Drag modules to change their order\n• Click the checkbox to enable/disable\n• Enabled modules are processed in order from top to bottom",
-        justify="left", 
-        font=('', 9)
-    )
-    instruction_label.pack(side=tk.LEFT, anchor=tk.W)
-    
-    # Frame for the listbox with a border
-    module_list_frame = ttk.LabelFrame(modules_frame, text="Modules")
-    module_list_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W+tk.E+tk.N+tk.S, padx=5, pady=5)
-    module_list_frame.grid_rowconfigure(0, weight=1)
-    module_list_frame.grid_columnconfigure(0, weight=1)
-    
-    # Custom listbox with drag-and-drop
-    module_listbox = DragDropListbox(
-        module_list_frame,
-        height=12,
-        width=40,
-        selectbackground='#e0e0e0',
-        selectforeground='black',
-        font=('Courier', 10),  # Monospace font for better checkbox alignment
-        borderwidth=0,
-        highlightthickness=0
-    )
-    module_listbox.grid(row=0, column=0, sticky=tk.NSEW, padx=5, pady=5)
-    
-    # Add scrollbar
-    module_scrollbar = ttk.Scrollbar(module_list_frame, orient=tk.VERTICAL, command=module_listbox.yview)
-    module_scrollbar.grid(row=0, column=1, sticky=tk.NS, padx=(0, 5), pady=5)
-    module_listbox.config(yscrollcommand=module_scrollbar.set)
-    
-    # All available modules
-    all_modules = ["Resolution", "Duration", "Rating", "Cut", "Release", "DynamicRange", 
-                  "Country", "ContentRating", "Language", "AudioChannels", "Director", 
-                  "Genre", "SpecialFeatures", "Studio", "AudioCodec", "Bitrate", 
-                  "FrameRate", "Size", "Source", "VideoCodec"]
-    
-    # Get current module order from config
-    current_modules = config.get('modules', 'order', fallback='').split(';')
-    current_modules = [m for m in current_modules if m]  # Remove empty strings
-    
-    # Add modules to listbox
-    # First add enabled modules in their order
-    for module in current_modules:
-        if module in all_modules:
-            module_listbox.insert(tk.END, f"[✓] {module}")
-            all_modules.remove(module)  # Remove from all_modules list
-    
-    # Then add the rest as disabled
-    for module in all_modules:
-        module_listbox.insert(tk.END, f"[ ] {module}")
-    
-    # Function to update the hidden entry when the list changes
-    def update_module_order():
-        # This function will be called whenever the module list changes
-        # No need to update a hidden entry anymore as we'll get values directly
-        pass
-    
-    # Set the update callback
-    module_listbox.update_callback = update_module_order
-    
-    # Language settings
-    ttk.Label(language_frame, text="Excluded Languages:", font=('', 10, 'bold')).grid(row=0, column=0, sticky=tk.W, padx=5, pady=10)
-    excluded_languages = ttk.Entry(language_frame, width=40)
-    excluded_languages.grid(row=0, column=1, sticky=tk.W, padx=5, pady=10)
-    excluded_languages.insert(0, config.get('language', 'excluded_languages', fallback=''))
-    ttk.Label(language_frame, text="Use commas to separate languages", 
-              font=('', 8), foreground="#666").grid(row=1, column=1, sticky=tk.W, padx=5)
-    
-    skip_multiple = tk.BooleanVar(value=config.getboolean('language', 'skip_multiple_audio_tracks', fallback=False))
-    skip_checkbox = ttk.Checkbutton(language_frame, text="Skip Multiple Audio Tracks", variable=skip_multiple)
-    skip_checkbox.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5, pady=10)
-    
-    # Rating settings
-    ttk.Label(rating_frame, text="Rating Source:", font=('', 10, 'bold')).grid(row=0, column=0, sticky=tk.W, padx=5, pady=10)
-    rating_source = ttk.Combobox(rating_frame, values=["imdb", "rotten_tomatoes"], state="readonly", width=15)
-    rating_source.grid(row=0, column=1, sticky=tk.W, padx=5, pady=10)
-    rating_source.set(config.get('rating', 'source', fallback='imdb'))
-    
-    ttk.Label(rating_frame, text="Rotten Tomatoes Type:", font=('', 10, 'bold')).grid(row=1, column=0, sticky=tk.W, padx=5, pady=10)
-    rt_type = ttk.Combobox(rating_frame, values=["critic", "audience"], state="readonly", width=15)
-    rt_type.grid(row=1, column=1, sticky=tk.W, padx=5, pady=10)
-    rt_type.set(config.get('rating', 'rotten_tomatoes_type', fallback='critic'))
-    
-    ttk.Label(rating_frame, text="TMDB API Key:", font=('', 10, 'bold')).grid(row=2, column=0, sticky=tk.W, padx=5, pady=10)
-    tmdb_api_key = ttk.Entry(rating_frame, width=40)
-    tmdb_api_key.grid(row=2, column=1, sticky=tk.W, padx=5, pady=10)
-    tmdb_api_key.insert(0, config.get('rating', 'tmdb_api_key', fallback=''))
-    
-    # Performance settings (removed cache TTL section)
-    ttk.Label(performance_frame, text="Worker Threads:", font=('', 10, 'bold')).grid(row=0, column=0, sticky=tk.W, padx=5, pady=10)
-    max_workers = ttk.Spinbox(performance_frame, from_=1, to=32, width=5)
-    max_workers.grid(row=0, column=1, sticky=tk.W, padx=5, pady=10)
-    max_workers.set(config.get('performance', 'max_workers', fallback='8'))
-    ttk.Label(performance_frame, text="Number of concurrent threads (4-12 recommended)", 
-              font=('', 8), foreground="#666").grid(row=1, column=1, sticky=tk.W, padx=5)
-    
-    ttk.Label(performance_frame, text="Batch Size:", font=('', 10, 'bold')).grid(row=2, column=0, sticky=tk.W, padx=5, pady=10)
-    batch_size = ttk.Spinbox(performance_frame, from_=1, to=100, width=5)
-    batch_size.grid(row=2, column=1, sticky=tk.W, padx=5, pady=10)
-    batch_size.set(config.get('performance', 'batch_size', fallback='20'))
-    ttk.Label(performance_frame, text="Movies to process in each batch (10-30 recommended)", 
-              font=('', 8), foreground="#666").grid(row=3, column=1, sticky=tk.W, padx=5)
-    
-    # Create a button frame
-    button_frame = ttk.Frame(settings_window)
-    button_frame.pack(fill=tk.X, padx=15, pady=15)
-    
-    # Save button
-    def save_settings():
-        # Get enabled modules directly from the listbox
-        enabled_modules = module_listbox.get_enabled_modules()
-        module_order_value = ';'.join(enabled_modules)
-        
-        # Update config object
-        config['server'] = {
-            'address': server_address.get(),
-            'token': server_token.get(),
-            'skip_libraries': skip_libraries.get()
-        }
-        
-        config['modules'] = {
-            'order': module_order_value  # Use directly retrieved value
-        }
-        
-        config['language'] = {
-            'excluded_languages': excluded_languages.get(),
-            'skip_multiple_audio_tracks': 'yes' if skip_multiple.get() else 'no'
-        }
-        
-        config['rating'] = {
-            'source': rating_source.get(),
-            'rotten_tomatoes_type': rt_type.get(),
-            'tmdb_api_key': tmdb_api_key.get()
-        }
-        
-        # Make sure performance section exists and update it
-        if 'performance' not in config:
-            config['performance'] = {}
-            
-        config['performance']['max_workers'] = max_workers.get()
-        config['performance']['batch_size'] = batch_size.get()
-        
-        save_config(config, config_path)
-        settings_window.destroy()
-    
-    ttk.Button(button_frame, text="Save", command=save_settings, style='Accent.TButton').pack(side=tk.RIGHT, padx=5)
-    ttk.Button(button_frame, text="Cancel", command=settings_window.destroy).pack(side=tk.RIGHT, padx=5)
+# ---------------------------
+# App entry
+# ---------------------------
 
-def create_gui():
-    # Use ThemedTk if available, otherwise use regular Tk
-    if THEMED_TK_AVAILABLE:
-        root = ThemedTk(theme="arc")  # Arc is a clean, modern theme
-    else:
-        root = tk.Tk()
-        
-    root.title("Edition Manager for Plex")
-    root.geometry("850x600")
-    root.minsize(600, 400)  # Set minimum window size
-    
-    # Try to set icon
-    try:
-        root.iconbitmap("icon.ico")
-    except:
-        pass  # Skip if icon not available
-    
-    # Configure style - FIX: Create ThemedStyle properly
-    if THEMED_TK_AVAILABLE:
-        style = ThemedStyle(root)  # Fixed: Create ThemedStyle object
-    else:
-        style = ttk.Style()
-    
-    # Define custom styles
-    style.configure('Header.TLabel', font=('', 16, 'bold'))
-    style.configure('Accent.TButton', font=('', 10, 'bold'))
-    style.configure('Title.TLabel', font=('', 12, 'bold'))
-    
-    # Create a main container frame with padding
-    main_frame = ttk.Frame(root, padding="20")
-    main_frame.pack(fill=tk.BOTH, expand=True)
-    
-    # Configure grid weights
-    main_frame.columnconfigure(0, weight=1)
-    main_frame.rowconfigure(3, weight=1)  # Status frame should expand
-    
-    # Header with app name and version
-    header_frame = ttk.Frame(main_frame)
-    header_frame.grid(row=0, column=0, sticky=tk.W+tk.E, pady=(0, 15))
-    
-    title_label = ttk.Label(header_frame, text="Edition Manager", style='Header.TLabel')
-    title_label.pack(side=tk.LEFT)
-    
-    version_label = ttk.Label(header_frame, text="v1.6", foreground="#666")
-    version_label.pack(side=tk.LEFT, padx=(10, 0), pady=3)
+def main():
+    app = QtWidgets.QApplication(sys.argv)
 
-    # Buttons in a modern card-like frame
-    actions_frame = ModernFramedFrame(main_frame)
-    actions_frame.grid(row=1, column=0, sticky=tk.W+tk.E, pady=(0, 15))
-    
-    # Title for actions section
-    ttk.Label(actions_frame, text="Actions", style='Title.TLabel').grid(
-        row=0, column=0, columnspan=5, sticky=tk.W, pady=(0, 10))
-    
-    button_configs = [
-        ("Process All Movies", "--all"),
-        ("Reset All Movies", "--reset"),
-        ("Backup Editions", "--backup"),
-        ("Restore Editions", "--restore"),
-        ("Settings", "settings")  # Special case for settings
-    ]
-    
-    buttons = []
-    for i, (button_text, command) in enumerate(button_configs):
-        button_style = 'Accent.TButton' if command == '--all' else 'TButton'
-        button = ttk.Button(
-            actions_frame, 
-            text=button_text, 
-            command=lambda cmd=command: handle_command(cmd),
-            style=button_style,
-            width=16
-        )
-        button.grid(row=1, column=i, padx=5, pady=5)
-        buttons.append(button)
+    # Subtle global font bump for nicer density
+    f = app.font(); f.setPointSize(f.pointSize() + 1); app.setFont(f)
 
-    # Progress section
-    progress_frame = ModernFramedFrame(main_frame)
-    progress_frame.grid(row=2, column=0, sticky=tk.W+tk.E, pady=(0, 15))
-    
-    progress_label = ttk.Label(progress_frame, text="Progress", style='Title.TLabel')
-    progress_label.pack(anchor=tk.W, pady=(0, 10))
-    
-    progress_var = tk.IntVar()
-    progress_bar = ttk.Progressbar(
-        progress_frame, 
-        variable=progress_var, 
-        maximum=100,
-        length=400,
-        mode='determinate'
-    )
-    progress_bar.pack(fill=tk.X)
-    
-    # Percentage label next to progress bar
-    percentage_label = ttk.Label(progress_frame, text="0%")
-    percentage_label.pack(anchor=tk.W, pady=(5, 0))
-    
-    # Function to update percentage label
-    def update_percentage_label():
-        percentage_label.config(text=f"{progress_var.get()}%")
-        root.after(100, update_percentage_label)
-    
-    # Start updating percentage label
-    update_percentage_label()
+    # Read preferred color before palette + window creation
+    cfg = configparser.ConfigParser()
+    if os.path.exists(CONFIG_FILE):
+        cfg.read(CONFIG_FILE)
+    primary_color = cfg.get("appearance", "primary_color", fallback="#6750A4")
 
-    # Status section
-    status_frame = ModernFramedFrame(main_frame)
-    status_frame.grid(row=3, column=0, sticky=tk.NSEW, pady=(0, 5))
-    status_frame.columnconfigure(0, weight=1)
-    status_frame.rowconfigure(1, weight=1)
-    
-    status_label = ttk.Label(status_frame, text="Status", style='Title.TLabel')
-    status_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
-    
-    status_text_frame = ttk.Frame(status_frame)
-    status_text_frame.grid(row=1, column=0, sticky=tk.NSEW)
-    status_text_frame.columnconfigure(0, weight=1)
-    status_text_frame.rowconfigure(0, weight=1)
-    
-    status_text = scrolledtext.ScrolledText(
-        status_text_frame, 
-        state=tk.DISABLED,
-        wrap=tk.WORD,
-        background="#f9f9f9",
-        borderwidth=1,
-        relief="solid",
-        font=("Consolas", 9)
-    )
-    status_text.grid(row=0, column=0, sticky=tk.NSEW)
+    # Enforce LIGHT palette with chosen highlight color
+    apply_light_palette(app, primary_color)
 
-    # Clear button for status
-    ttk.Button(
-        status_frame, 
-        text="Clear Status", 
-        command=lambda: clear_status(status_text)
-    ).grid(row=2, column=0, sticky=tk.E, pady=(10, 0))
-    
-    def clear_status(status_text):
-        status_text.configure(state=tk.NORMAL)
-        status_text.delete(1.0, tk.END)
-        status_text.configure(state=tk.DISABLED)
+    w = MainWindow()
+    w.show()
+    sys.exit(app.exec())
 
-    # Button commands
-    status_queue = queue.Queue()
-    total_items = [0]  # Wrapped in list to make it mutable
-    current_item = [0]
-
-    def handle_command(cmd):
-        if cmd == "settings":
-            open_settings_window(root)
-        else:
-            threading.Thread(
-                target=run_command_with_progress,
-                args=(cmd, progress_var, status_queue, buttons),
-                daemon=True
-            ).start()
-
-    # Set up the status updater
-    update_status(status_text, status_queue, progress_var, progress_bar, total_items, current_item)
-
-    # Add initial status message
-    status_text.configure(state=tk.NORMAL)
-    status_text.insert(tk.END, "Welcome to Edition Manager\n")
-    status_text.insert(tk.END, "Select an action to begin\n")
-    status_text.configure(state=tk.DISABLED)
-    
-    # Add a footer with version info
-    footer_frame = ttk.Frame(main_frame)
-    footer_frame.grid(row=4, column=0, sticky=tk.E, pady=(5, 0))
-    ttk.Label(
-        footer_frame, 
-        text="Edition Manager • Python " + ".".join(map(str, sys.version_info[:3])),
-        foreground="#666",
-        font=("", 8)
-    ).pack(side=tk.RIGHT)
-
-    # Center window on screen
-    root.update_idletasks()
-    width = root.winfo_width()
-    height = root.winfo_height()
-    x = (root.winfo_screenwidth() // 2) - (width // 2)
-    y = (root.winfo_screenheight() // 2) - (height // 2)
-    root.geometry('{}x{}+{}+{}'.format(width, height, x, y))
-    
-    root.mainloop()
 
 if __name__ == "__main__":
-    create_gui()
+    main()
