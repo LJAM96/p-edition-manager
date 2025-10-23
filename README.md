@@ -22,9 +22,9 @@ This tool is perfect for movie enthusiasts who want more detailed information ab
 
 Simply run the [GUI](https://github.com/Entree3k/Edition-Manager/blob/main/Edition%20Manager%20GUI.md) version
 ```
-python edition-manager-gui.pyw
+python edition-manager-gui.py
 ```
-or double-click on `edition-manager-gui.pyw`
+or on Widnows, double-click on `edition-manager-gui.pyw`
 
 ## Command Line Usage
 
