@@ -10,6 +10,25 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from configparser import ConfigParser
+from threading import Lock
+_progress_lock = Lock()
+_progress_total = 1
+_progress_done = 0
+
+def _progress_set_total(n: int):
+    global _progress_total, _progress_done
+    with _progress_lock:
+        _progress_total = max(1, int(n))
+        _progress_done = 0
+        print("PROGRESS 0"); sys.stdout.flush()
+
+def _progress_step(k: int = 1):
+    global _progress_done, _progress_total
+    with _progress_lock:
+        _progress_done += k
+        pct = int((_progress_done * 100) / _progress_total)
+    print(f"PROGRESS {min(100, max(0, pct))}")
+    sys.stdout.flush()
 
 # Create a logger
 logger = logging.getLogger(__name__)
@@ -28,11 +47,11 @@ def get_session():
         thread_local.session = requests.Session()
     return thread_local.session
 
-# Simple API request function (no caching)
-def make_request(url, headers):
-    """Make an API request without caching"""
+HTTP_TIMEOUT = 10
+
+def make_request(url, headers, timeout=HTTP_TIMEOUT):
     session = get_session()
-    response = session.get(url, headers=headers)
+    response = session.get(url, headers=headers, timeout=timeout)
     response.raise_for_status()
     return response.json()
 
@@ -58,8 +77,8 @@ def initialize_settings():
         try:
             # Test connection
             headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
-            response = make_request(server, headers)
-            server_name = response['MediaContainer']['friendlyName']
+            response = make_request(f'{server}/library/sections', headers)
+            server_name = response['MediaContainer'].get('friendlyName', server)
             logger.info(f"Successfully connected to server: {server_name}")
         except requests.exceptions.RequestException as err:
             logger.error("Server connection failed, please check the settings in the configuration file or your network. For help, please visit https://github.com/x1ao4/edition-manager-for-plex for instructions.")
@@ -80,32 +99,33 @@ def process_movies_batch(movies_batch, server, token, modules, excluded_language
 def process_movies(server, token, skip_libraries, modules, excluded_languages, max_workers, batch_size):
     headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
     libraries = make_request(f'{server}/library/sections', headers)['MediaContainer']['Directory']
-    
-    # Get all movies from all movie libraries first
+
+    # Gather all movies across selected movie libraries
     all_movies = []
     library_info = {}
-    
     for library in libraries:
-        if library['type'] == 'movie' and library['title'] not in skip_libraries:
-            library_key = library['key']
-            lib_title = library['title']
-            
-            response = make_request(f'{server}/library/sections/{library_key}/all', headers)
-            if 'MediaContainer' in response and 'Metadata' in response['MediaContainer']:
-                library_movies = response['MediaContainer']['Metadata']
-                all_movies.extend(library_movies)
-                library_info[lib_title] = len(library_movies)
-                
-    logger.info(f"Total movies to process: {len(all_movies)}")
+        if library.get('type') == 'movie' and library.get('title') not in skip_libraries:
+            lib_title = library.get('title')
+            resp = make_request(f"{server}/library/sections/{library['key']}/all", headers)
+            movies = resp.get('MediaContainer', {}).get('Metadata', []) if resp else []
+            all_movies.extend(movies)
+            library_info[lib_title] = len(movies)
+
+    logger.info(f"Total movies found: {len(all_movies)}")
     for lib_title, count in library_info.items():
-        logger.info(f'Library: {lib_title}, Movie count: {count}')
-    
-    # Process in batches with ThreadPoolExecutor
+        logger.info(f"Library: {lib_title}, Movies: {count}")
+
+    _progress_set_total(len(all_movies))
+
+    # Submit batches, but wait for each batch to finish before submitting the next (backpressure)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         for i in range(0, len(all_movies), batch_size):
             batch = all_movies[i:i+batch_size]
-            executor.submit(process_movies_batch, batch, server, token, modules, excluded_languages)
-            logger.info(f"Submitted batch {i//batch_size + 1}/{(len(all_movies)+batch_size-1)//batch_size} for processing")
+            futures = [executor.submit(process_single_movie, server, token, m, modules, excluded_languages) for m in batch]
+            for _ in as_completed(futures):
+                _progress_step()
+            logger.info(f"Processed batch {i//batch_size + 1}/{(len(all_movies)+batch_size-1)//batch_size}")
 
 # Process a single movie (without caching)
 def process_single_movie(server, token, movie, modules, excluded_languages):
@@ -289,36 +309,32 @@ def update_movie(server, token, movie, tags, modules):
 def reset_movies(server, token, skip_libraries, max_workers, batch_size):
     headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
     libraries = make_request(f'{server}/library/sections', headers)['MediaContainer']['Directory']
-    
-    # Collect all movies that need to be reset
-    all_to_reset = []
-    library_info = {}
-    
-    for library in libraries:
-        if library['type'] == 'movie' and library['title'] not in skip_libraries:
-            library_key = library['key']
-            lib_title = library['title']
-            
-            response = make_request(f'{server}/library/sections/{library_key}/all', headers)
-            if 'MediaContainer' in response and 'Metadata' in response['MediaContainer']:
-                library_movies = response['MediaContainer']['Metadata']
-                # Only include movies with editionTitle
-                to_reset = [m for m in library_movies if 'editionTitle' in m]
-                all_to_reset.extend(to_reset)
-                library_info[lib_title] = len(to_reset)
-    
-    logger.info(f"Total movies to reset: {len(all_to_reset)}")
-    for lib_title, count in library_info.items():
-        logger.info(f'Library: {lib_title}, Movies to reset: {count}')
-    
-    # Process in batches with ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for i in range(0, len(all_to_reset), batch_size):
-            batch = all_to_reset[i:i+batch_size]
-            # Process each movie in the batch
-            for movie in batch:
-                executor.submit(reset_movie, server, token, movie)
-            logger.info(f"Submitted reset batch {i//batch_size + 1}/{(len(all_to_reset)+batch_size-1)//batch_size}")
+
+    to_reset = []
+    for lib in libraries:
+        if lib.get('type') == 'movie' and lib.get('title') not in skip_libraries:
+            resp = make_request(f"{server}/library/sections/{lib['key']}/all", headers)
+            movies = resp.get('MediaContainer', {}).get('Metadata', []) if resp else []
+            to_reset.extend([m for m in movies if 'editionTitle' in m])
+
+    logger.info(f"Total movies to reset: {len(to_reset)}")
+    _progress_set_total(len(to_reset))
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    def _reset_one(movie):
+        movie_id = movie['ratingKey']
+        params = {'type': 1, 'id': movie_id, 'editionTitle.value': '', 'editionTitle.locked': 0}
+        s = get_session()
+        s.put(f'{server}/library/metadata/{movie_id}', headers={'X-Plex-Token': token}, params=params)
+        logger.info(f"Reset: {movie.get('title', 'Unknown')}")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for i in range(0, len(to_reset), batch_size):
+            batch = to_reset[i:i+batch_size]
+            futures = [ex.submit(_reset_one, m) for m in batch]
+            for _ in as_completed(futures):
+                _progress_step()
+            logger.info(f"Reset batch {i//batch_size + 1}/{(len(to_reset)+batch_size-1)//batch_size}")
 
 # Reset a single movie
 def reset_movie(server, token, movie):
@@ -338,103 +354,47 @@ def reset_movie(server, token, movie):
 # Backup metadata
 def backup_metadata(server, token, backup_file):
     headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
-    libraries = requests.get(f'{server}/library/sections', headers=headers).json()['MediaContainer']['Directory']
-    
+    libraries = make_request(f'{server}/library/sections', headers)['MediaContainer']['Directory']
     metadata = {}
-    for library in libraries:
-        if library['type'] == 'movie':
-            library_key = library['key']
-            response = requests.get(f'{server}/library/sections/{library_key}/all', headers=headers).json()
-            if 'MediaContainer' in response and 'Metadata' in response['MediaContainer']:
-                for movie in response['MediaContainer']['Metadata']:
-                    metadata[movie['ratingKey']] = {
-                        'title': movie['title'],
-                        'editionTitle': movie.get('editionTitle', '')
-                    }
-    
-    os.makedirs(os.path.dirname(backup_file), exist_ok=True)
-    
-    with open(backup_file, 'w') as f:
+    for lib in libraries:
+        if lib.get('type') == 'movie':
+            response = make_request(f"{server}/library/sections/{lib['key']}/all", headers)
+            for movie in response['MediaContainer'].get('Metadata', []):
+                metadata[movie['ratingKey']] = {
+                    'title': movie.get('title', ''),
+                    'editionTitle': movie.get('editionTitle', '')
+                }
+
+    backup_file = Path(backup_file)  # normalize in case a string is passed
+    backup_file.parent.mkdir(parents=True, exist_ok=True)
+    with backup_file.open('w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2)
-    
-    logger.info(f"Backup created with {len(metadata)} movies to {backup_file}")
+    print(f"Backup complete. {len(metadata)} movies saved to {backup_file}")
 
 # Improved restore metadata function
 def restore_metadata(server, token, backup_file):
-    with open(backup_file, 'r') as f:
+    with open(backup_file, 'r', encoding='utf-8') as f:
         metadata = json.load(f)
-    
-    logger.info(f"Starting restore from backup with {len(metadata)} movies")
-    restored_count = 0
-    
-    headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
-    
-    # First, get a list of all movies currently in the libraries
-    all_current_movies = {}
-    libraries = requests.get(f'{server}/library/sections', headers=headers).json()['MediaContainer']['Directory']
-    for library in libraries:
-        if library['type'] == 'movie':
-            library_key = library['key']
-            response = requests.get(f'{server}/library/sections/{library_key}/all', headers=headers).json()
-            if 'MediaContainer' in response and 'Metadata' in response['MediaContainer']:
-                for movie in response['MediaContainer']['Metadata']:
-                    all_current_movies[movie['ratingKey']] = movie.get('title', 'Unknown')
-    
-    logger.info(f"Found {len(all_current_movies)} movies in current libraries")
-    
-    # Process each movie in the backup
-    for movie_id, movie_data in metadata.items():
-        # Check if the movie still exists
-        if movie_id in all_current_movies:
-            # First reset the edition title completely
-            clear_params = {
-                'type': 1,
-                'id': movie_id,
-                'editionTitle.value': '',
-                'editionTitle.locked': 0
-            }
-            clear_response = requests.put(f'{server}/library/metadata/{movie_id}', 
-                                      headers=headers, params=clear_params)
-            
-            # Then apply the backup edition title (even if it's empty)
-            backup_edition = movie_data.get('editionTitle', '')
-            params = {
-                'type': 1,
-                'id': movie_id,
-                'editionTitle.value': backup_edition,
-                'editionTitle.locked': 1 if backup_edition else 0
-            }
-            restore_response = requests.put(f'{server}/library/metadata/{movie_id}', 
-                                       headers=headers, params=params)
-            
-            if restore_response.status_code == 200:
-                title = all_current_movies[movie_id]
-                if backup_edition:
-                    logger.info(f"Restored '{title}' to: '{backup_edition}'")
-                else:
-                    logger.info(f"Cleared edition for '{title}'")
-                restored_count += 1
-            else:
-                logger.error(f"Failed to restore movie ID {movie_id}: HTTP {restore_response.status_code}")
-        else:
-            logger.warning(f"Movie ID {movie_id} from backup not found in current libraries")
-    
-    # Force Plex to refresh
-    try:
-        refresh_params = {'force': 1}
-        refresh_headers = headers.copy()
-        refresh_headers['X-Plex-Container-Start'] = '0'
-        refresh_headers['X-Plex-Container-Size'] = '0'
-        
-        for library in libraries:
-            if library['type'] == 'movie':
-                library_key = library['key']
-                requests.get(f'{server}/library/sections/{library_key}/refresh', headers=refresh_headers, params=refresh_params)
-                logger.info(f"Triggered refresh for library: {library.get('title', library_key)}")
-    except Exception as e:
-        logger.error(f"Error refreshing libraries: {str(e)}")
-    
-    logger.info(f"Restoration complete. Successfully processed {restored_count} of {len(metadata)} movies.")
+
+    items = list(metadata.items())
+    logger.info(f"Starting restore for {len(items)} movies")
+    _progress_set_total(len(items))
+
+    def _restore_one(pair):
+        movie_id, meta = pair
+        edition = meta.get('editionTitle', '')
+        params = {'type': 1, 'id': movie_id, 'editionTitle.value': edition, 'editionTitle.locked': 1 if edition else 0}
+        s = get_session()
+        s.put(f'{server}/library/metadata/{movie_id}', headers={'X-Plex-Token': token}, params=params)
+        _progress_step()
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = [ex.submit(_restore_one, p) for p in items]
+        for _ in as_completed(futures):
+            pass
+
+    logger.info("Restore complete.")
 
 # Main function
 def main():
