@@ -18,6 +18,13 @@ Edition Manager is a powerful tool designed to enhance your Plex media library b
 
 This tool is perfect for movie enthusiasts who want more detailed information about their digital collection at a glance, right within their Plex interface. It turns your Plex server into a comprehensive movie database, enhancing your browsing and selection experience.
 
+# Requirements
+Python 3.0 or higher installed.
+All required dependencies installed using 
+```
+pip install -r requirements.txt
+```
+
 # User-Friendly Operations:
 
 Simply run the [GUI](https://github.com/Entree3k/Edition-Manager/blob/main/Edition%20Manager%20GUI.md) version
