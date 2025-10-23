@@ -6,6 +6,8 @@ In Plex, there are two concepts of "version": "[Edition](https://support.plex.tv
 Edition Manager
 Edition Manager is a powerful tool designed to enhance your Plex media library by leveraging the Edition feature to display rich, customizable metadata for your movies.
 
+[![Buy me a slice of pizza](https://i.imgur.com/eFZcvUq.png)](https://www.buymeacoffee.com/Entree)
+
 # Key Features:
 - **Metadata Enhancement**: Extracts and displays crucial information such as resolution, audio codecs, content ratings, and more
 - **Customizable Module System**: Allows users to choose which information to display and in what order
