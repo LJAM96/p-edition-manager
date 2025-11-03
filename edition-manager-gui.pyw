@@ -1,18 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Edition Manager — PySide6 / Qt (Material-inspired, Light mode only)
-
-- Keeps CLI contract with edition-manager.py: --all, --reset, --backup, --restore
-- Reads/writes ./config/config.ini with the same keys your script expects
-- Pure PySide6 (no qt-material .xml themes). We force a clean LIGHT palette and
-  apply a small stylesheet for cards, buttons, tabs, etc.
-
-Run:
-    pip install PySide6
-    python edition_manager_qt.py
-"""
-
 import os
 import sys
 import re
@@ -23,7 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt
 
 APP_TITLE = "Edition Manager"
-APP_VERSION = "v1.8 - Visual Update"
+APP_VERSION = "v1.8.2 - Visual Update"
 PRIMARY_SCRIPT = "edition-manager.py"
 CONFIG_FILE = str(Path(__file__).parent / "config" / "config.ini")
 
@@ -33,10 +18,6 @@ DEFAULT_MODULES = [
     "Genre", "SpecialFeatures", "Studio", "AudioCodec", "Bitrate",
     "FrameRate", "Size", "Source", "VideoCodec",
 ]
-
-# ---------------------------
-# Light palette helper (no external themes)
-# ---------------------------
 
 def apply_light_palette(app: QtWidgets.QApplication, primary_color: str = "#6750A4") -> None:
     app.setStyle("Fusion")  # modern, consistent base
@@ -71,10 +52,8 @@ class ProcessWorker(QtCore.QObject):
         self.flag = flag
         self.proc = QtCore.QProcess(self)
         self.proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
-        # Hide extra console window on Windows for the spawned CLI process
         if sys.platform.startswith("win"):
             def _no_console(args):
-                # CREATE_NO_WINDOW
                 args["creationFlags"] = 0x08000000
             try:
                 self.proc.setCreateProcessArgumentsModifier(_no_console)
@@ -113,9 +92,8 @@ class ProcessWorker(QtCore.QObject):
     def _done(self, code: int, _status):
         self.finished.emit(code)
 
-
 # ---------------------------
-# Modules list (checkbox + drag)
+# Modules list
 # ---------------------------
 class ModulesList(QtWidgets.QListWidget):
     """Checkbox list with drag-to-reorder."""
@@ -127,7 +105,6 @@ class ModulesList(QtWidgets.QListWidget):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
         self.setAlternatingRowColors(True)
-        # Fill items: enabled first (in provided order), then the rest alpha
         enabled = [m for m in enabled_order if m in modules]
         disabled = [m for m in modules if m not in enabled]
         for m in enabled + disabled:
@@ -143,7 +120,6 @@ class ModulesList(QtWidgets.QListWidget):
                 out.append(it.text())
         return out
 
-
 # ---------------------------
 # Settings dialog
 # ---------------------------
@@ -155,7 +131,7 @@ class SettingsDialog(QtWidgets.QDialog):
         vbox = QtWidgets.QVBoxLayout(self)
         vbox.setContentsMargins(12, 12, 12, 12)
         
-        # Header / App Bar (simple)
+        # Header / App Bar
         header = QtWidgets.QLabel("Settings")
         header.setObjectName("SectionHeaderBig")
         vbox.addWidget(header)
@@ -289,7 +265,7 @@ class SettingsDialog(QtWidgets.QDialog):
         btn_box.accepted.connect(self.on_save)
         btn_box.rejected.connect(self.reject)
 
-    # ---- Server helpers (NEW) ----
+    # ---- Server helpers ----
     def _plex_headers(self):
         return {"X-Plex-Token": self.server_token.text().strip(), "Accept": "application/json"}
 
@@ -423,14 +399,12 @@ class SettingsDialog(QtWidgets.QDialog):
             self.cfg.write(f)
         self.accept()
 
-
 # ---------------------------
 # Main window
 # ---------------------------
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        # Read chosen primary color for stylesheet accents
         self.cfg = configparser.ConfigParser()
         if os.path.exists(CONFIG_FILE):
             self.cfg.read(CONFIG_FILE)
@@ -651,7 +625,6 @@ class MainWindow(QtWidgets.QMainWindow):
 # ---------------------------
 # App entry
 # ---------------------------
-
 def main():
     app = QtWidgets.QApplication(sys.argv)
 
