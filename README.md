@@ -1,4 +1,4 @@
-# Edition Manager
+<img width="4786" height="1024" alt="logo" src="https://github.com/user-attachments/assets/4b6354d2-b580-4166-8df5-18efdcade733" />
 
 Edition Manager is a powerful utility that enhances your Plex movie library by automatically generating and updating rich "Edition" metadata based on technical and content specifications of your movie files.
 
