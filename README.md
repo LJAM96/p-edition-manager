@@ -66,7 +66,7 @@ Edition Manager uses a modular system where each component extracts specific inf
 | AudioCodec | Audio format | Dolby TrueHD, DTS-HD MA |
 | Bitrate | Video bitrate | 24.5 Mbps |
 | ContentRating | Age rating | PG-13, R |
-| Country | Production country | USA, France |
+| Country | Production country | United States, France |
 | Cut | Special cuts | Director's Cut, Extended |
 | Director | Film director | Spielberg |
 | Duration | Movie length | 120 MIN |
@@ -76,12 +76,12 @@ Edition Manager uses a modular system where each component extracts specific inf
 | Language | Audio language | German, Japanese |
 | Rating | IMDB/RT rating | 8.5, 92% |
 | Release | Special releases | Anniversary Edition |
-| Resolution | Video resolution | 1080P, 4K |
+| Resolution | Video resolution | 4K, 1080P |
 | Size | File size | 58.2 GB |
-| Source | Media source | REMUX, WEB-DL |
+| Source | Media source | Remux, Web-DL |
 | SpecialFeatures | Has bonus content | Special Features |
 | Studio | Production studio | Warner Bros. |
-| VideoCodec | Video format | HEVC, AVC |
+| VideoCodec | Video format | H.264, H.265, AVC |
 
 [Full Overview of Modules](https://github.com/Entree3k/edition-manager/blob/main/Edition%20Manager%20Modules.md)
 
