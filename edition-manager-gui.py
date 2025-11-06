@@ -55,6 +55,32 @@ def apply_light_palette(app: QtWidgets.QApplication, primary_color: str = "#6750
     pal.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor("#FFFFFF"))
     app.setPalette(pal)
 
+def apply_dark_palette(app: QtWidgets.QApplication, primary_color: str = "#6750A4") -> None:
+    app.setStyle("Fusion")
+    pal = QtGui.QPalette()
+
+    bg      = QtGui.QColor("#121212")
+    card    = QtGui.QColor("#1E1E1E")
+    text    = QtGui.QColor("#FFFFFF")
+    subtext = QtGui.QColor(255, 255, 255, 200)
+    base    = QtGui.QColor("#151515")
+
+    pal.setColor(QtGui.QPalette.Window,              bg)
+    pal.setColor(QtGui.QPalette.WindowText,          text)
+    pal.setColor(QtGui.QPalette.Base,                base)
+    pal.setColor(QtGui.QPalette.AlternateBase,       card)
+    pal.setColor(QtGui.QPalette.ToolTipBase,         card)
+    pal.setColor(QtGui.QPalette.ToolTipText,         text)
+    pal.setColor(QtGui.QPalette.Text,                text)
+    pal.setColor(QtGui.QPalette.Button,              card)
+    pal.setColor(QtGui.QPalette.ButtonText,          text)
+    pal.setColor(QtGui.QPalette.BrightText,          QtCore.Qt.red)
+    pal.setColor(QtGui.QPalette.Highlight,           QtGui.QColor(primary_color))
+    pal.setColor(QtGui.QPalette.HighlightedText,     QtGui.QColor("#FFFFFF"))
+    pal.setColor(QtGui.QPalette.PlaceholderText,     subtext)
+
+    app.setPalette(pal)
+
 class ProcessWorker(QtCore.QObject):
     started = QtCore.Signal()
     line = QtCore.Signal(str)
@@ -262,8 +288,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.size_combo = QtWidgets.QComboBox()
         self.size_combo.addItem("Small (≤ 500 movies)",        userData="small")
         self.size_combo.addItem("Medium (500–2,000 movies)",   userData="medium")
-        self.size_combo.addItem("Large (2,000–5,000 movies)", userData="large")
-        self.size_combo.addItem("Extra Large (5,000+ movies)", userData="xl")
+        self.size_combo.addItem("Large (2,000+ movies)", userData="large")
         pf.addRow("Library Size", self.size_combo)
 
         # Row: recommendation button
@@ -299,6 +324,11 @@ class SettingsDialog(QtWidgets.QDialog):
         self.primary_color_btn.clicked.connect(self.choose_primary_color)
         af.addRow("Primary Highlight Color", self.primary_color_btn)
         af.addRow("Current Color", self.primary_color_display)
+        self.dark_mode_chk = QtWidgets.QCheckBox("Enable dark mode")
+        self.dark_mode_chk.setChecked(self.cfg.getboolean("appearance", "dark_mode", fallback=False))
+        af.addRow("", self.dark_mode_chk)
+        self.cfg.set("appearance", "primary_color", self.primary_color_display.text().strip())
+        self.cfg.set("appearance", "dark_mode", "yes" if self.dark_mode_chk.isChecked() else "no")
 
         # Footer buttons
         btn_box = QtWidgets.QDialogButtonBox()
@@ -338,19 +368,6 @@ class SettingsDialog(QtWidgets.QDialog):
                 workers = 24
             elif cpu_threads >= 8:
                 workers = 16
-            else:
-                workers = 8
-            return {
-                "max_workers": workers,
-                "batch_size": 100
-            }
-
-        if size_key == "xl":
-            # 5,000+ movies
-            if cpu_threads >= 16:
-                workers = 24
-            elif cpu_threads >= 8:
-                workers = 12
             else:
                 workers = 8
             return {
@@ -510,6 +527,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self.cfg.set("performance", "batch_size", str(self.batch_size.value()))
         # appearance
         self.cfg.set("appearance", "primary_color", self.primary_color_display.text().strip())
+        self.cfg.set("appearance", "dark_mode", "yes" if self.dark_mode_chk.isChecked() else "no")
 
         cfg_dir = Path(CONFIG_FILE).parent
         cfg_dir.mkdir(parents=True, exist_ok=True)
@@ -622,6 +640,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if os.path.exists(CONFIG_FILE):
             self.cfg.read(CONFIG_FILE)
         self.primary_color = self.cfg.get("appearance", "primary_color", fallback="#6750A4")
+        self.dark_mode = self.cfg.getboolean("appearance", "dark_mode", fallback=False)
 
         self.setWindowTitle(f"{APP_TITLE} for Plex")
         self.resize(980, 720)
@@ -735,7 +754,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._current_worker = None
 
-        self._apply_light_styles()
+        self._apply_styles()
 
     def cancel_current_operation(self):
         """Cancel the currently running background process."""
@@ -775,6 +794,12 @@ class MainWindow(QtWidgets.QMainWindow):
         eff.setColor(QtGui.QColor(0, 0, 0, int(255 * opacity)))
         eff.setOffset(*offset)
         widget.setGraphicsEffect(eff)
+
+    def _apply_styles(self):
+        if getattr(self, "dark_mode", False):
+            self._apply_dark_styles()
+        else:
+            self._apply_light_styles()
 
     def _apply_light_styles(self):
         c = self.primary_color
@@ -819,17 +844,68 @@ class MainWindow(QtWidgets.QMainWindow):
             QTabBar::tab:selected {{ background: #FFFFFF; border-color: #CAC4D0; }}
         """)
 
+    def _apply_dark_styles(self):
+        c = self.primary_color
+        def lighten(hex_color, factor=0.15):
+            col = QtGui.QColor(hex_color)
+            r, g, b = col.red(), col.green(), col.blue()
+            r = min(255, int(r * (1 + factor)))
+            g = min(255, int(g * (1 + factor)))
+            b = min(255, int(b * (1 + factor)))
+            return f"#{r:02x}{g:02x}{b:02x}"
+        hover    = lighten(c, 0.12)
+        disabled = lighten(c, 0.40)
+
+        self.setStyleSheet(self.styleSheet() + f"""
+            QLabel#AppTitle {{ font-size: 20pt; font-weight: 700; letter-spacing: .2px; color: #FFFFFF; }}
+            QLabel#AppVersion {{ color: rgba(255,255,255,.85); font-size: 10pt; }}
+            QLabel#SectionHeaderBig {{ font-size: 16pt; font-weight: 700; margin: 2px 0 10px 2px; color: rgba(255,255,255,.95); }}
+            QLabel#SectionTitle {{ margin-top: 8px; margin-bottom: 6px; font-size: 12pt; font-weight: 600; color: rgba(255,255,255,.75); }}
+
+            QFrame#AppBar {{ background: {c}; border-radius: 10px; }}
+
+            QGroupBox#Card {{ background: #1E1E1E; border: 1px solid #2A2A2A; border-radius: 12px; padding: 6px; margin-top: 0px; }}
+
+            QPushButton {{ padding: 8px 14px; border-radius: 8px; font-weight: 600; }}
+            QPushButton#Primary {{ background: {c}; color: #FFFFFF; border: none; }}
+            QPushButton#Primary:hover {{ background: {hover}; }}
+            QPushButton#Primary:disabled {{ background: {disabled}; color: #FFFFFF; }}
+
+            QPushButton#Outlined {{ background: transparent; color: #FFFFFF; border: 1px solid #3A3A3A; }}
+            QPushButton#Outlined:hover {{ background: #252525; }}
+
+            QPushButton#Text {{ background: transparent; color: {c}; border: none; padding: 6px 10px; }}
+            QPushButton#Text:hover {{ background: #222222; border-radius: 6px; }}
+
+            QProgressBar {{ border: 1px solid #2A2A2A; border-radius: 8px; background: #1A1A1A; height: 14px; color: rgba(255,255,255,.85); text-align: center; }}
+            QProgressBar::chunk {{ background-color: {c}; border-radius: 8px; }}
+
+            QPlainTextEdit {{ background: #151515; border: 1px solid #2A2A2A; border-radius: 8px; padding: 8px; color: rgba(255,255,255,.95); }}
+
+            QTabWidget::pane {{ border: 1px solid #2A2A2A; border-radius: 10px; padding: 6px; background: #1E1E1E; }}
+            QTabBar::tab {{ padding: 8px 14px; margin: 2px; border-radius: 8px; background: #222222; color: #FFFFFF; border: 1px solid transparent; font-weight: 600; }}
+            QTabBar::tab:selected {{ background: #1E1E1E; border-color: #3A3A3A; }}
+        """)
+
     # --- Settings ---
     def open_settings(self):
         dlg = SettingsDialog(self)
-        before = self.primary_color
-        if dlg.exec():
+        result = dlg.exec()  # run ONCE
+
+        if result == QtWidgets.QDialog.Accepted:
+            # Re-read saved settings and apply
             self.cfg.read(CONFIG_FILE)
-            self.primary_color = self.cfg.get("appearance", "primary_color", fallback=before)
-            self._apply_light_styles()
+            self.primary_color = self.cfg.get("appearance", "primary_color", fallback=self.primary_color)
+            self.dark_mode     = self.cfg.getboolean("appearance", "dark_mode", fallback=self.dark_mode)
+
             app = QtWidgets.QApplication.instance()
             if app is not None:
-                apply_light_palette(app, self.primary_color)
+                if self.dark_mode:
+                    apply_dark_palette(app, self.primary_color)
+                else:
+                    apply_light_palette(app, self.primary_color)
+
+            self._apply_styles()
 
     # --- Process execution ---
     def run_flag(self, flag: str):
@@ -894,6 +970,12 @@ def main():
     primary_color = cfg.get("appearance", "primary_color", fallback="#6750A4")
 
     apply_light_palette(app, primary_color)
+
+    dark_mode = cfg.getboolean("appearance", "dark_mode", fallback=False)
+    if dark_mode:
+        apply_dark_palette(app, primary_color)
+    else:
+        apply_light_palette(app, primary_color)
 
     icon_path = Path(__file__).parent / "assets" / "icon.png"
     if icon_path.exists():
