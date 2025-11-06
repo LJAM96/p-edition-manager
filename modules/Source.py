@@ -1,28 +1,28 @@
 import re
-import requests
 
-def get_Source(file_name, server, token, movie_id):
-    def match_source(title):
+def get_Source(file_name, movie_data):
+
+    def match_source(title: str):
         sources = {
-            r'\b(REMUX|BDREMUX|BD-REMUX)\b': 'REMUX',
-            r'\b(BLURAY|BD|BLU-RAY|BD1080P)\b': 'BD',
-            r'\bBDRIP\b': 'BDRIP',
-            r'\bWEB-DL|WEBDL\b': 'WEB-DL',
-            r'\bVODRIP\b': 'VODRIP',
-            r'\bWEBRIP\b': 'WEBRIP',
-            r'\bHDRIP\b': 'HDRIP',
+            r'\b(REMUX|BDREMUX|BD-REMUX)\b': 'Remux',
+            r'\b(BLURAY|BD|BLU-RAY|BD1080P)\b': 'Blu-ray',
+            r'\bBDRIP\b': 'Blu-ray Rip',
+            r'\bWEB-DL|WEBDL\b': 'Web-DL',
+            r'\bWEBRIP\b': 'WebRip',
+            r'\bVODRIP\b': 'VOD Rip',
+            r'\bHDRIP\b': 'HD Rip',
             r'\bHR-HDTV|HRHDTV\b': 'HR-HDTV',
             r'\bHDTV\b': 'HDTV',
             r'\bPDTV\b': 'PDTV',
             r'\bDVD\b': 'DVD',
-            r'\bDVDRIP\b': 'DVDRIP',
-            r'\bDVDSCR\b': 'DVDSCR',
+            r'\bDVDRIP\b': 'DVD Rip',
+            r'\bDVDSCR\b': 'DVD Screener',
             r'\bR5\b': 'R5',
-            r'\bLDRIP\b': 'LDRIP',
-            r'\bPPVRIP\b': 'PPVRIP',
+            r'\bLDRIP\b': 'LD Rip',
+            r'\bPPVRIP\b': 'PPV Rip',
             r'\bSDTV\b': 'SDTV',
-            r'\bTVRIP\b': 'TVRIP',
-            r'\bVHSRIP\b': 'VHSRIP',
+            r'\bTVRIP\b': 'TV Rip',
+            r'\bVHSRIP\b': 'VHS Rip',
             r'\bHDTC|HD-TC\b': 'HDTC',
             r'\bTC\b': 'TC',
             r'\bHDCAM|HD-CAM\b': 'HDCAM',
@@ -30,23 +30,24 @@ def get_Source(file_name, server, token, movie_id):
             r'\bTS\b': 'TS',
             r'\bCAM\b': 'CAM'
         }
-        for pattern, source in sources.items():
+
+        for pattern, source_value in sources.items():
             if re.search(pattern, title, re.IGNORECASE):
-                return source
+                return source_value
         return None
 
     source = match_source(file_name.upper())
+    if source:
+        return source
 
-    if source is None:
-        headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
-        response = requests.get(f'{server}/library/metadata/{movie_id}', headers=headers)
-        data = response.json()
+    for media in movie_data.get('Media', []):
+        for part in media.get('Part', []):
+            for stream in part.get('Stream', []):
+                if stream.get('streamType') == 1:  # video
+                    title = stream.get('title') or stream.get('displayTitle') or ""
+                    if title:
+                        found = match_source(title.upper())
+                        if found:
+                            return found
 
-        part = data['MediaContainer']['Metadata'][0]['Media'][0]['Part'][0]
-        if 'Stream' in part:
-            video_streams = part['Stream']
-            video_stream = next((stream for stream in video_streams if stream['streamType'] == 1), None)
-            if video_stream and 'title' in video_stream:
-                source = match_source(video_stream['title'].upper())
-
-    return source
+    return None

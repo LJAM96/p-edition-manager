@@ -1,5 +1,8 @@
-def get_Director(metadata):
-    directors = metadata.get('Director', [])
-    if directors:
-        return directors[0].get('tag')  # Return only the first director
-    return None
+def get_Director(movie_data):
+    directors = movie_data.get('Director', [])
+    if not directors:
+        return None
+    names = [d.get('tag') for d in directors if d.get('tag')]
+    if not names:
+        return None
+    return names[0]

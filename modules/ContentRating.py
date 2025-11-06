@@ -1,9 +1,5 @@
-def get_ContentRating(metadata):
-    # Get content rating information from metadata
-    contentRating = metadata.get('contentRating', None)
-
-    # If content rating is "Not Rated", convert it to "NR"
-    if contentRating == 'Not Rated':
-        contentRating = 'NR'
-
-    return contentRating
+def get_ContentRating(movie_data):
+    cr = movie_data.get('contentRating')
+    if not cr:
+        return None
+    return cr

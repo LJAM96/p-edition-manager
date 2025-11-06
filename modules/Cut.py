@@ -1,29 +1,29 @@
 import re
-import requests
 
-def get_Cut(file_name, server, token, movie_id):
-    # Define cut versions and their uniform output
-    cuts = {
-        r'\b(Theatrical Cut|Theatrical)\b': 'Theatrical Cut',
-        r'\b(Director\'s Cut|Directors Cut|DC)\b': 'Directors Cut',
-        r'\b(Producer\'s Cut|Producer Cut)\b': 'Producers Cut',
-        r'\b(Extended Cut|Extended Edition|Extended)\b': 'Extended',
-        r'\b(Unrated Cut|Unrated)\b': 'Unrated',
-        r'\b(The Final Cut|Final Cut)\b': 'Final Cut',
-        r'\b(Television Cut|Television Version|Television)\b': 'Television Cut',
-        r'\b(International Cut)\b': 'International Cut',
-        r'\b(Redux|Redux Version|Redux Cut)\b': 'Redux'
-    }
+def get_Cut(file_name):
+    name_low = file_name.lower()
 
-    # Extract the edition information from the filename
-    edition_match = re.search(r'\{edition-(.*?)\}', file_name)
-    if edition_match:
-        edition_info = edition_match.group(1)
-        
-        # Check edition info for cut version
-        for cut_pattern, uniform_cut in cuts.items():
-            if re.search(cut_pattern, edition_info, re.IGNORECASE):
-                return uniform_cut
+    patterns = [
+        (r"director'?s[ ._-]?cut|dirs[ ._-]?cut|dir[ ._-]?cut", "Director's Cut"),
+        (r"extended( [._-]?(cut|edition|version))?", "Extended"),
+        (r"(final)[ ._-]?cut", "Final Cut"),
+        (r"(ultimate)[ ._-](cut|edition)?", "Ultimate Edition"),
+        (r"(assembly|recut)[ ._-]?(cut|edition)?", "Assembly Cut"),
+        (r"(special|collector'?s)[ ._-]?(edition|cut)?", "Special Edition"),
+        (r"(workprint)[ ._-]?(cut|edition)?", "Workprint"),
+        (r"(redux)[ ._-]?(cut|edition)?", "Redux"),
+        (r"(festival|cannes|sundance)[ ._-]?cut", "Festival Cut"),
+        (r"(theatrical|international|us[ ._-]?theatrical|tv[ ._-]?(cut|version)|network[ ._-]?cut)", "Theatrical Cut"),
+        (r"(fan[ ._-]?edit|despecialized|fan[ ._-]?restoration)", "Fan Edit"),
+        (r"\b(unrated|uncut)\b", "Unrated"),
+        (r"imax(?![ ._-]?enhanced)", "IMAX"),
+        (r"(\d{1,3})(st|nd|rd|th)?[ ._-]?anniversary", "Anniversary Edition"),
+        (r"remaster", "Remastered"),
+        (r"restored", "Restored"),
+    ]
 
-    # If no cut version found in filename, return None
+    for pat, label in patterns:
+        if re.search(pat, name_low):
+            return label
+
     return None

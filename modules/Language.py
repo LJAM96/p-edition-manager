@@ -1,15 +1,7 @@
 import requests
 from configparser import ConfigParser
 
-def get_Language(server, token, movie_id, excluded_languages):
-    config = ConfigParser()
-    config.read('config/config.ini')
-    skip_multiple_audio_tracks = config.getboolean('language', 'skip_multiple_audio_tracks', fallback=False)
-
-    headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
-    response = requests.get(f'{server}/library/metadata/{movie_id}', headers=headers)
-    data = response.json()
-
+def get_Language(movie_data, excluded_languages, skip_multiple_audio_tracks):
     language_mapping = {
         'Afrikaans': 'Afrikaans',
         'Akan': 'Akan',
@@ -99,6 +91,7 @@ def get_Language(server, token, movie_id, excluded_languages):
         'magyar': 'Hungarian',
         'नेपाली': 'Nepali',
         'Norsk': 'Norwegian',
+        'norsk': 'Norwegian',
         'Occitan': 'Occitan',
         'ଓଡ଼ିଆ': 'Odia',
         'Afaan Oromoo': 'Oromo',
@@ -146,28 +139,23 @@ def get_Language(server, token, movie_id, excluded_languages):
         'isiZulu': 'Zulu'
     }
 
-    if 'MediaContainer' in data and 'Metadata' in data['MediaContainer']:
-        metadata = data['MediaContainer']['Metadata'][0]
-        if 'Media' in metadata:
-            audio_tracks = []
-            for media in metadata['Media']:
-                if 'Part' in media:
-                    for part in media['Part']:
-                        if 'Stream' in part:
-                            for stream in part['Stream']:
-                                if stream['streamType'] == 2:  # 2 is for audio streams
-                                    language = stream.get('language')
-                                    if language:
-                                        audio_tracks.append(language)
+    audio_tracks = []
 
-            # If there are multiple audio tracks and skip_multiple_audio_tracks is True, return None
-            if len(audio_tracks) > 1 and skip_multiple_audio_tracks:
-                return None
+    for media in movie_data.get('Media', []):
+        for part in media.get('Part', []):
+            for stream in part.get('Stream', []):
+                if stream.get('streamType') == 2:
+                    lang_raw = stream.get('language')
+                    if lang_raw:
+                        audio_tracks.append(lang_raw)
 
-            # Process single audio track or when skip_multiple_audio_tracks is False
-            for language in audio_tracks:
-                language = language_mapping.get(language, language)
-                if language not in ['Unknown', 'Undetermined', 'Undetermined language'] and language not in excluded_languages:
-                    return language
+    # If there are multiple audio tracks and config says skip
+    if len(audio_tracks) > 1 and skip_multiple_audio_tracks:
+        return None
+
+    for lang in audio_tracks:
+        norm = language_mapping.get(lang, lang)
+        if norm not in ['Unknown', 'Undetermined', 'Undetermined language'] and norm not in excluded_languages:
+            return norm
 
     return None

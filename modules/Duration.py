@@ -1,16 +1,10 @@
-def get_Duration(metadata):
-    # Get metadata for the video stream
-    media = metadata.get('Media')
-    if media is None or len(media) == 0:
+def get_Duration(movie_data):
+    dur_ms = movie_data.get('duration')
+    if not dur_ms:
         return None
-    video_stream = media[0]
-
-    # Get the duration of the video from the metadata (in milliseconds)
-    duration_ms = video_stream.get('duration')
-    if duration_ms is None:
-        return None
-
-    # Convert duration from milliseconds to minutes, and round to the nearest integer
-    duration_min = round(duration_ms / 1000 / 60)
-
-    return f"{duration_min} MIN"
+    total_minutes = int(dur_ms // 60000)
+    hours = total_minutes // 60
+    mins = total_minutes % 60
+    if hours > 0:
+        return f"{hours}h {mins}m"
+    return f"{mins}m"

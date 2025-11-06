@@ -1,24 +1,27 @@
 import requests
 
-def get_Bitrate(server, token, movie_id):
-    headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
-    response = requests.get(f'{server}/library/metadata/{movie_id}', headers=headers)
-    data = response.json()
-
+def get_Bitrate(movie_data):
     max_size = 0
-    max_bitrate = None
+    best_bitrate = None
 
-    for media in data['MediaContainer']['Metadata'][0]['Media']:
-        for part in media['Part']:
-            if part['size'] > max_size:
-                max_size = part['size']
-                max_bitrate = media.get('bitrate')
+    for media in movie_data.get('Media', []):
+        br = media.get('bitrate')
+        for part in media.get('Part', []):
+            size = part.get('size', 0)
+            if size > max_size:
+                max_size = size
+                best_bitrate = br
 
-    if max_bitrate is None:
+    if best_bitrate is None:
         return None
 
-    video_bitrate_mbps = max_bitrate / 1000
-    if video_bitrate_mbps < 1:
-        return f"{round(max_bitrate)} Kbps"
+    try:
+        kbps = float(best_bitrate)
+    except:
+        return None
+
+    if kbps >= 1000:
+        mbps = kbps / 1000.0
+        return f"{mbps:.1f} Mbps"
     else:
-        return f"{round(video_bitrate_mbps, 1)} Mbps"
+        return f"{int(kbps)} Kbps"

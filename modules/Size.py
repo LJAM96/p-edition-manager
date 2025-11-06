@@ -1,22 +1,20 @@
 import requests
 
-def get_Size(server, token, movie_id):
-    headers = {'X-Plex-Token': token, 'Accept': 'application/json'}
-    response = requests.get(f'{server}/library/metadata/{movie_id}', headers=headers)
-    data = response.json()
-
+def get_Size(movie_data):
     max_size = 0
+    for media in movie_data.get('Media', []):
+        for part in media.get('Part', []):
+            sz = part.get('size', 0)
+            if sz > max_size:
+                max_size = sz
 
-    for media in data['MediaContainer']['Metadata'][0]['Media']:
-        for part in media['Part']:
-            if part['size'] > max_size:
-                max_size = part['size']
+    if max_size <= 0:
+        return None
 
-    if max_size < 1024:
-        return f"{max_size} B"
-    elif max_size < 1024**2:
-        return f"{max_size/1024:.2f} KB"
-    elif max_size < 1024**3:
-        return f"{max_size/1024**2:.2f} MB"
+    gib = max_size / (1024 ** 3)
+    mib = max_size / (1024 ** 2)
+
+    if gib >= 1:
+        return f"{gib:.1f} GB"
     else:
-        return f"{max_size/1024**3:.2f} GB"
+        return f"{mib:.0f} MB"

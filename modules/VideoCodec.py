@@ -1,16 +1,42 @@
-def get_VideoCodec(metadata):
-    media = metadata.get('Media')
-    if media is None or len(media) == 0:
+def get_VideoCodec(movie_data):
+    media_list = movie_data.get('Media', [])
+    if not media_list:
         return None
-    video_stream = media[0]
+    codec = media_list[0].get('videoCodec')
+    if not codec:
+        return None
 
-    video_codec = video_stream.get('videoCodec')
+    c = codec.lower()
 
-    if video_codec is not None:
-        video_codec = video_codec.upper()
-        if video_codec == 'MPEG2VIDEO':
-            video_codec = 'MPEG2'
-        elif video_codec == 'MPEG1VIDEO':
-            video_codec = 'MPEG1'
+    mapping = {
+        "hevc": "H.265",
+        "h265": "H.265",
+        "h.265": "H.265",
+        "hvc1": "H.265",
 
-    return video_codec
+        "h264": "H.264",
+        "h.264": "H.264",
+        "avc": "H.264",
+        "avc1": "H.264",
+
+        "av1": "AV1",
+        "vp9": "VP9",
+        "vp8": "VP8",
+
+        "mpeg2": "MPEG-2",
+        "mpeg-2": "MPEG-2",
+        "mpeg4": "MPEG-4",
+        "mpeg-4": "MPEG-4",
+        "xvid": "XviD",
+        "divx": "DivX",
+        "vc1": "VC-1",
+        "vc-1": "VC-1",
+
+        "prores": "ProRes",
+        "dnxhd": "DNxHD",
+        "dnxhr": "DNxHR",
+
+        "theora": "Theora",
+    }
+
+    return mapping.get(c, codec.upper())
