@@ -2,25 +2,44 @@ import os
 import sys
 import re
 import configparser
+import random
+import requests
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import Qt
 
 APP_TITLE = "Edition Manager"
-APP_VERSION = "v1.8.2 - Visual Update"
+
+_version = "v1.9.0"
+_msg_file = Path(__file__).parent / "assets" / "messages.txt"
+
+_tagline = None
+if _msg_file.exists():
+    try:
+        lines = [
+            ln.strip().strip('"').strip("“”")
+            for ln in _msg_file.read_text(encoding="utf-8").splitlines()
+            if ln.strip()
+        ]
+        if lines:
+            _tagline = random.choice(lines)
+    except Exception:
+        _tagline = None
+
+APP_VERSION = f"{_version} - {_tagline}" if _tagline else _version
 PRIMARY_SCRIPT = "edition-manager.py"
 CONFIG_FILE = str(Path(__file__).parent / "config" / "config.ini")
 
 DEFAULT_MODULES = [
-    "Resolution", "Duration", "Rating", "Cut", "Release", "DynamicRange",
-    "Country", "ContentRating", "Language", "AudioChannels", "Director",
-    "Genre", "SpecialFeatures", "Studio", "AudioCodec", "Bitrate",
-    "FrameRate", "Size", "Source", "VideoCodec",
+    "AudioChannels", "AudioCodec", "Bitrate", "ContentRating", "Country", "Cut",
+    "Director", "Duration", "DynamicRange", "FrameRate", "Genre",
+    "Language", "Rating", "Release", "Resolution", "ShortFilm", "Size",
+    "Source", "SpecialFeatures", "Studio", "VideoCodec", "Writer",
 ]
 
 def apply_light_palette(app: QtWidgets.QApplication, primary_color: str = "#6750A4") -> None:
-    app.setStyle("Fusion")  # modern, consistent base
+    app.setStyle("Fusion")
     pal = QtGui.QPalette()
     pal.setColor(QtGui.QPalette.Window,        QtGui.QColor("#F6F6FA"))
     pal.setColor(QtGui.QPalette.WindowText,    QtGui.QColor(20, 18, 26))
@@ -32,16 +51,11 @@ def apply_light_palette(app: QtWidgets.QApplication, primary_color: str = "#6750
     pal.setColor(QtGui.QPalette.Button,        QtGui.QColor("#FFFFFF"))
     pal.setColor(QtGui.QPalette.ButtonText,    QtGui.QColor(20, 18, 26))
     pal.setColor(QtGui.QPalette.BrightText,    QtCore.Qt.red)
-    pal.setColor(QtGui.QPalette.Highlight,     QtGui.QColor(primary_color))  # primary
+    pal.setColor(QtGui.QPalette.Highlight,     QtGui.QColor(primary_color))
     pal.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor("#FFFFFF"))
     app.setPalette(pal)
 
-
-# ---------------------------
-# Process worker
-# ---------------------------
 class ProcessWorker(QtCore.QObject):
-    """Run the CLI and stream output."""
     started = QtCore.Signal()
     line = QtCore.Signal(str)
     progress = QtCore.Signal(int)
@@ -61,6 +75,12 @@ class ProcessWorker(QtCore.QObject):
                 pass
         self.proc.readyReadStandardOutput.connect(self._read)
         self.proc.finished.connect(self._done)
+
+    def _detect_cpu_threads(self):
+        threads = os.cpu_count()
+        if threads is None:
+            threads = 4  # fallback
+        return threads
 
     def start(self):
         self.started.emit()
@@ -92,11 +112,7 @@ class ProcessWorker(QtCore.QObject):
     def _done(self, code: int, _status):
         self.finished.emit(code)
 
-# ---------------------------
-# Modules list
-# ---------------------------
 class ModulesList(QtWidgets.QListWidget):
-    """Checkbox list with drag-to-reorder."""
     def __init__(self, modules: list[str], enabled_order: list[str], parent=None):
         super().__init__(parent)
         self.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
@@ -120,9 +136,6 @@ class ModulesList(QtWidgets.QListWidget):
                 out.append(it.text())
         return out
 
-# ---------------------------
-# Settings dialog
-# ---------------------------
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -161,7 +174,6 @@ class SettingsDialog(QtWidgets.QDialog):
         form.addRow("Skip Libraries", self.skip_libraries)
         form.addRow(QtWidgets.QLabel("Use semicolons to separate library names"))
 
-        # Buttons: Test Connection & Library Picker (NEW)
         tool_row = QtWidgets.QHBoxLayout()
         tool_row.setContentsMargins(0,0,0,0)
         tool_row.setSpacing(8)
@@ -227,20 +239,51 @@ class SettingsDialog(QtWidgets.QDialog):
         rf.addRow("Rotten Tomatoes Type", rt_box)
         rf.addRow(QtWidgets.QLabel("Rotten Tomatoes type is used only when the source is Rotten Tomatoes."))
 
-        # TMDb API Key (NEW)
+        # TMDb API Key
         self.tmdb_key = QtWidgets.QLineEdit(self.cfg.get("rating", "tmdb_api_key", fallback=""))
+        self.tmdb_key.setEchoMode(QtWidgets.QLineEdit.Password)
         rf.addRow("TMDb API Key", self.tmdb_key)
 
         # --- Performance tab ---
         perf_tab = QtWidgets.QWidget(); tabs.addTab(perf_tab, "Performance")
         pf = QtWidgets.QFormLayout(perf_tab)
         pf.setHorizontalSpacing(14); pf.setVerticalSpacing(8)
+
+        # detect CPU threads
+        self._detected_threads = os.cpu_count() or 4
+
+        # Row: detected hardware
+        self.hw_label = QtWidgets.QLabel(
+            f"Detected CPU Threads: {self._detected_threads}"
+        )
+        pf.addRow("Hardware", self.hw_label)
+
+        # Row: library size selector
+        self.size_combo = QtWidgets.QComboBox()
+        self.size_combo.addItem("Small (≤ 500 movies)",        userData="small")
+        self.size_combo.addItem("Medium (500–2,000 movies)",   userData="medium")
+        self.size_combo.addItem("Large (2,000–5,000 movies)", userData="large")
+        self.size_combo.addItem("Extra Large (5,000+ movies)", userData="xl")
+        pf.addRow("Library Size", self.size_combo)
+
+        # Row: recommendation button
+        self.rec_btn = QtWidgets.QPushButton("Apply Recommendation")
+        self.rec_btn.setObjectName("Primary")
+        self.rec_btn.clicked.connect(self._apply_recommendation)
+        pf.addRow("", self.rec_btn)
+
         self.max_workers = QtWidgets.QSpinBox(); self.max_workers.setRange(1, 256)
         self.max_workers.setValue(int(self.cfg.get("performance","max_workers", fallback="10")))
         self.batch_size = QtWidgets.QSpinBox(); self.batch_size.setRange(1, 5000)
         self.batch_size.setValue(int(self.cfg.get("performance","batch_size", fallback="25")))
         pf.addRow("Max Workers", self.max_workers)
         pf.addRow("Batch Size", self.batch_size)
+
+        # hint label
+        pf.addRow(QtWidgets.QLabel(
+            "Tip: Max Workers = how many movies at once.\n"
+            "Batch Size = how many per round."
+        ))
 
         # --- Appearance tab ---
         appearance_tab = QtWidgets.QWidget(); tabs.addTab(appearance_tab, "Appearance")
@@ -265,6 +308,82 @@ class SettingsDialog(QtWidgets.QDialog):
         btn_box.accepted.connect(self.on_save)
         btn_box.rejected.connect(self.reject)
 
+    def _recommend_performance(self, cpu_threads: int, size_key: str):
+
+        def cap_workers(n):
+            # never below 4, never above 24
+            if n < 4:
+                n = 4
+            if n > 24:
+                n = 24
+            return n
+
+        if size_key == "small":
+            # ≤ 500 movies
+            return {
+                "max_workers": cap_workers(min(8, cpu_threads)),
+                "batch_size": 25
+            }
+
+        if size_key == "medium":
+            # 500–2,000 movies
+            return {
+                "max_workers": cap_workers(min(16, cpu_threads)),
+                "batch_size": 50
+            }
+
+        if size_key == "large":
+            # 2,000–5,000 movies
+            if cpu_threads >= 16:
+                workers = 24
+            elif cpu_threads >= 8:
+                workers = 16
+            else:
+                workers = 8
+            return {
+                "max_workers": workers,
+                "batch_size": 100
+            }
+
+        if size_key == "xl":
+            # 5,000+ movies
+            if cpu_threads >= 16:
+                workers = 24
+            elif cpu_threads >= 8:
+                workers = 12
+            else:
+                workers = 8
+            return {
+                "max_workers": workers,
+                "batch_size": 100
+            }
+
+        # fallback default
+        return {
+            "max_workers": 8,
+            "batch_size": 25
+        }
+
+    @QtCore.Slot()
+    def _apply_recommendation(self):
+        cpu_threads = self._detected_threads
+
+        # which size did the user pick
+        size_key = self.size_combo.currentData()
+
+        rec = self._recommend_performance(cpu_threads, size_key)
+
+        # fill the spinboxes in the UI
+        self.max_workers.setValue(rec["max_workers"])
+        self.batch_size.setValue(rec["batch_size"])
+
+        # little toast/snackbar at the top of the dialog
+        human_msg = (
+            f"Applied {rec['max_workers']} workers / batch {rec['batch_size']} "
+            f"(CPU threads: {cpu_threads})"
+        )
+        self._show_banner(human_msg, ok=True)
+
     # ---- Server helpers ----
     def _plex_headers(self):
         return {"X-Plex-Token": self.server_token.text().strip(), "Accept": "application/json"}
@@ -272,7 +391,7 @@ class SettingsDialog(QtWidgets.QDialog):
     def _server_base(self):
         return self.server_address.text().strip().rstrip("/")
 
-    # ---- Banner (snackbar-like) helper ----
+    # ---- Banner helper ----
     def _show_banner(self, message: str, ok: bool = True):
         # Create once and reuse
         if not hasattr(self, "_banner"):
@@ -284,7 +403,7 @@ class SettingsDialog(QtWidgets.QDialog):
             self._banner.hide()
 
         # Color + text
-        bg = "#1E8E3E" if ok else "#D93025"  # green / red
+        bg = "#1E8E3E" if ok else "#D93025"
         self._banner.setStyleSheet(f"QFrame#Banner {{ background: {bg}; color: #FFFFFF; }}")
         self._banner_lab.setText(message)
 
@@ -297,7 +416,7 @@ class SettingsDialog(QtWidgets.QDialog):
         self._banner.setGeometry(x, y, w, h)
         self._banner.show()
 
-        # Auto-hide after 2.2s
+        # Auto-hide
         QtCore.QTimer.singleShot(2200, self._banner.hide)
 
     @QtCore.Slot()
@@ -368,7 +487,6 @@ class SettingsDialog(QtWidgets.QDialog):
                 f"background-color: {hex_color}; border: 1px solid #CAC4D0; border-radius: 6px; padding: 6px;")
 
     def on_save(self):
-        # Ensure sections exist
         for sec in ("server","modules","language","rating","performance","appearance"):
             if not self.cfg.has_section(sec):
                 self.cfg.add_section(sec)
@@ -386,7 +504,7 @@ class SettingsDialog(QtWidgets.QDialog):
         rt_val = "critic" if self.rt_critics.isChecked() else "audience"
         self.cfg.set("rating", "source", src_val)
         self.cfg.set("rating", "rotten_tomatoes_type", rt_val)
-        self.cfg.set("rating", "tmdb_api_key", self.tmdb_key.text().strip())  # NEW
+        self.cfg.set("rating", "tmdb_api_key", self.tmdb_key.text().strip())
         # performance
         self.cfg.set("performance", "max_workers", str(self.max_workers.value()))
         self.cfg.set("performance", "batch_size", str(self.batch_size.value()))
@@ -399,9 +517,104 @@ class SettingsDialog(QtWidgets.QDialog):
             self.cfg.write(f)
         self.accept()
 
-# ---------------------------
-# Main window
-# ---------------------------
+class SearchDialog(QtWidgets.QDialog):
+    def __init__(self, server_base: str, token: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Search Movie in Plex")
+        self.resize(720, 560)
+        self._server = server_base
+        self._token = token
+        self._chosen_rating_key = None
+
+        v = QtWidgets.QVBoxLayout(self)
+        v.setContentsMargins(12,12,12,12); v.setSpacing(8)
+
+        row = QtWidgets.QHBoxLayout(); v.addLayout(row)
+        self.edit = QtWidgets.QLineEdit(); self.edit.setPlaceholderText("Type a movie title…")
+        self.btn = QtWidgets.QPushButton("Search")
+        row.addWidget(self.edit, 1); row.addWidget(self.btn)
+        self.btn.clicked.connect(self.search_now)
+        self.edit.returnPressed.connect(self.search_now)
+
+        self.listw = QtWidgets.QListWidget()
+        self.listw.setViewMode(QtWidgets.QListView.IconMode)
+        self.listw.setIconSize(QtCore.QSize(120, 180))
+        self.listw.setResizeMode(QtWidgets.QListView.Adjust)
+        self.listw.setMovement(QtWidgets.QListView.Static)
+        self.listw.setSpacing(10)
+        self.listw.itemDoubleClicked.connect(self.accept_selection)
+        v.addWidget(self.listw, 1)
+
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.button(QtWidgets.QDialogButtonBox.Ok).setText("Process Selected")
+        bb.accepted.connect(self.accept_selection)
+        bb.rejected.connect(self.reject)
+        v.addWidget(bb)
+
+    def chosen_rating_key(self):
+        return self._chosen_rating_key
+
+    def _get_json(self, url):
+        r = requests.get(url, headers={"X-Plex-Token": self._token, "Accept": "application/json"}, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    def _libraries(self):
+        data = self._get_json(self._server + "/library/sections")
+        return [d for d in data.get('MediaContainer',{}).get('Directory',[]) if d.get('type') == 'movie']
+
+    def search_now(self):
+        q = self.edit.text().strip()
+        if not q:
+            return
+        self.listw.clear()
+        try:
+            libs = self._libraries()
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Error", f"Could not fetch libraries:\n{e}")
+            return
+
+        results = []
+        for lib in libs:
+            key = lib.get('key')
+            lib_title = lib.get('title')
+            try:
+                data = self._get_json(self._server + f"/library/sections/{key}/all?title={requests.utils.quote(q)}")
+            except Exception:
+                continue
+            for m in data.get('MediaContainer',{}).get('Metadata',[]) or []:
+                results.append((lib_title, m))
+
+        for lib_title, m in results:
+            title = m.get('title', 'Unknown')
+            year  = m.get('year',  '')
+            rk    = m.get('ratingKey')
+            thumb = m.get('thumb')  # e.g. "/library/metadata/12345/thumb/..."
+            # Try direct thumb path
+            icon = QtGui.QIcon()
+            if thumb:
+                try:
+                    url = f"{self._server}{thumb}?X-Plex-Token={self._token}"
+                    img = requests.get(url, timeout=10).content
+                    pm = QtGui.QPixmap()
+                    pm.loadFromData(img)
+                    icon = QtGui.QIcon(pm)
+                except Exception:
+                    pass
+
+            it = QtWidgets.QListWidgetItem(icon, f"{title} ({year})\n{lib_title}")
+            it.setData(QtCore.Qt.UserRole, rk)
+            self.listw.addItem(it)
+
+    def accept_selection(self):
+        it = self.listw.currentItem()
+        if not it:
+            return
+        self._chosen_rating_key = it.data(QtCore.Qt.UserRole)
+        if not self._chosen_rating_key:
+            return
+        self.accept()
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -413,12 +626,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(f"{APP_TITLE} for Plex")
         self.resize(980, 720)
 
+        # Set window icon (top-left & taskbar)
+        icon_path = Path(__file__).parent / "assets" / "icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QtGui.QIcon(str(icon_path)))
+
         central = QtWidgets.QWidget(); self.setCentralWidget(central)
         root = QtWidgets.QVBoxLayout(central)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
-        # ---- App Bar (visual) ----
+        # ---- App Bar ----
         bar = QtWidgets.QFrame()
         bar.setObjectName("AppBar")
         bar_layout = QtWidgets.QHBoxLayout(bar)
@@ -437,16 +655,18 @@ class MainWindow(QtWidgets.QMainWindow):
         ag.setHorizontalSpacing(10)
 
         self.btn_all = QtWidgets.QPushButton("Process All Movies"); self.btn_all.setObjectName("Primary")
+        self.btn_one = QtWidgets.QPushButton("Process One Movie"); self.btn_one.setObjectName("Primary")
         self.btn_reset = QtWidgets.QPushButton("Reset All Movies"); self.btn_reset.setObjectName("Outlined")
         self.btn_backup = QtWidgets.QPushButton("Backup Editions"); self.btn_backup.setObjectName("Outlined")
         self.btn_restore = QtWidgets.QPushButton("Restore Editions"); self.btn_restore.setObjectName("Outlined")
         self.btn_settings = QtWidgets.QPushButton("Settings"); self.btn_settings.setObjectName("Outlined")
 
         ag.addWidget(self.btn_all,    0, 0)
-        ag.addWidget(self.btn_reset,  0, 1)
-        ag.addWidget(self.btn_backup, 0, 2)
-        ag.addWidget(self.btn_restore,0, 3)
-        ag.addWidget(self.btn_settings,0,4)
+        ag.addWidget(self.btn_one,    0, 1)
+        ag.addWidget(self.btn_reset,  0, 2)
+        ag.addWidget(self.btn_backup, 0, 3)
+        ag.addWidget(self.btn_restore,0, 4)
+        ag.addWidget(self.btn_settings,0,5)
         root.addWidget(actions_group)
 
         # ---- Section: Progress ----
@@ -471,8 +691,21 @@ class MainWindow(QtWidgets.QMainWindow):
         mono = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont); mono.setPointSize(10)
         self.status.setFont(mono)
         sg.addWidget(self.status, 0, 0, 1, 1)
+
+        # --- Status buttons row ---
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(6)
+
+        self.btn_cancel = QtWidgets.QPushButton("Cancel"); self.btn_cancel.setObjectName("Text")
         self.btn_clear = QtWidgets.QPushButton("Clear Status"); self.btn_clear.setObjectName("Text")
-        sg.addWidget(self.btn_clear, 1, 0, 1, 1, alignment=Qt.AlignRight)
+
+        btn_row.addWidget(self.btn_cancel)
+        btn_row.addStretch(1)
+        btn_row.addWidget(self.btn_clear)
+
+        sg.addLayout(btn_row, 1, 0, 1, 1)
+  
         root.addWidget(status_group, 1)
 
         # Footer
@@ -488,10 +721,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Wiring
         self.btn_clear.clicked.connect(lambda: self.status.setPlainText(""))
         self.btn_settings.clicked.connect(self.open_settings)
+        self.btn_one.clicked.connect(self.open_search)
         self.btn_all.clicked.connect(lambda: self.run_flag("--all"))
         self.btn_reset.clicked.connect(lambda: self.run_flag("--reset"))
         self.btn_backup.clicked.connect(lambda: self.run_flag("--backup"))
         self.btn_restore.clicked.connect(lambda: self.run_flag("--restore"))
+        self.btn_cancel.clicked.connect(self.cancel_current_operation)
 
         # Timer to update percent label
         self._percent_timer = QtCore.QTimer(self)
@@ -500,8 +735,38 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._current_worker = None
 
-        # Apply local style sheet for polish (light-only) with dynamic color
         self._apply_light_styles()
+
+    def cancel_current_operation(self):
+        """Cancel the currently running background process."""
+        if self._current_worker and self._current_worker.proc.state() == QtCore.QProcess.Running:
+            self._current_worker.proc.kill()
+            self.append_status("Operation cancelled by user.")
+            self._current_worker = None
+            self.progress.setRange(0, 100)
+            self.set_progress(0)
+            self._set_buttons_enabled(True)
+        else:
+            self.append_status("No active operation to cancel.")
+
+    def open_search(self):
+        dlg = SearchDialog(self._cfg_server_base(), self._cfg_token(), self)
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            rk = dlg.chosen_rating_key()
+            if rk:
+                # run the CLI for exactly one movie
+                self.run_flag(f"--one-id={rk}")
+
+    def _cfg_server_base(self):
+        self.cfg.read(CONFIG_FILE)
+        return self.cfg.get("server","address", fallback="").strip().rstrip("/")
+
+    def _cfg_token(self):
+        self.cfg.read(CONFIG_FILE)
+        return self.cfg.get("server","token", fallback="").strip()
+
+    def _plex_headers(self):
+        return {"X-Plex-Token": self._cfg_token(), "Accept": "application/json"}
 
     # ---- Styling helpers ----
     def _add_shadow(self, widget, radius=18, opacity=0.20, offset=(0, 4)):
@@ -513,7 +778,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_light_styles(self):
         c = self.primary_color
-        # Slightly darker for hover/disabled states
         def darken(hex_color, factor=0.15):
             col = QtGui.QColor(hex_color)
             r, g, b = col.red(), col.green(), col.blue()
@@ -559,12 +823,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def open_settings(self):
         dlg = SettingsDialog(self)
         before = self.primary_color
-        if dlg.exec():  # if saved
-            # If color changed, persist immediately in UI without restart
+        if dlg.exec():
             self.cfg.read(CONFIG_FILE)
             self.primary_color = self.cfg.get("appearance", "primary_color", fallback=before)
             self._apply_light_styles()
-            # Also update the app palette highlight so selection bars match
             app = QtWidgets.QApplication.instance()
             if app is not None:
                 apply_light_palette(app, self.primary_color)
@@ -585,7 +847,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_started(self):
-        self.progress.setRange(0, 0)  # indeterminate until we see PROGRESS
+        self.progress.setRange(0, 0)
 
     @QtCore.Slot(int)
     def _on_finished(self, code: int):
@@ -618,32 +880,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status.verticalScrollBar().setValue(self.status.verticalScrollBar().maximum())
 
     def _set_buttons_enabled(self, enabled: bool):
-        for b in (self.btn_all, self.btn_reset, self.btn_backup, self.btn_restore, self.btn_settings):
+        for b in (self.btn_one, self.btn_all, self.btn_reset, self.btn_backup, self.btn_restore, self.btn_settings):
             b.setEnabled(enabled)
 
-
-# ---------------------------
-# App entry
-# ---------------------------
 def main():
     app = QtWidgets.QApplication(sys.argv)
 
-    # Subtle global font bump for nicer density
     f = app.font(); f.setPointSize(f.pointSize() + 1); app.setFont(f)
 
-    # Read preferred color before palette + window creation
     cfg = configparser.ConfigParser()
     if os.path.exists(CONFIG_FILE):
         cfg.read(CONFIG_FILE)
     primary_color = cfg.get("appearance", "primary_color", fallback="#6750A4")
 
-    # Enforce LIGHT palette with chosen highlight color
     apply_light_palette(app, primary_color)
+
+    icon_path = Path(__file__).parent / "assets" / "icon.png"
+    if icon_path.exists():
+        app.setWindowIcon(QtGui.QIcon(str(icon_path)))
 
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
-
 
 if __name__ == "__main__":
     main()
