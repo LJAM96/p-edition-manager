@@ -10,6 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN set -eux; \
     apt-get update && \
     apt-get install -y --no-install-recommends \
+        cron \
         libgl1 \
         libglib2.0-0 \
         libxcb1 \
@@ -31,7 +32,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=app:app config config
 COPY --chown=app:app edition-manager.py edition-manager-gui.py edition-manager-gui.pyw edition-manager-gui.sh modules ./
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY edition-manager-cron.sh /usr/local/bin/edition-manager-cron.sh
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/edition-manager-cron.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["python", "edition-manager.py"]
 
 USER app
-
-ENTRYPOINT ["python", "edition-manager.py"]

@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  edition-manager:
+    build: .
+    image: p-edition-manager:latest
+    volumes:
+      - ./config:/app/config:ro
+    entrypoint: /usr/local/bin/docker-entrypoint.sh
+    command: ["python", "edition-manager.py", "--all"]
+    environment:
+      EDITION_MANAGER_MODE: cli
+
+  edition-manager-cron:
+    build: .
+    image: p-edition-manager:latest
+    user: root
+    entrypoint: /usr/local/bin/docker-entrypoint.sh
+    environment:
+      EDITION_MANAGER_MODE: cron
+      CRON_SCHEDULE: "0 */6 * * *"
+      CRON_COMMAND: "python /app/edition-manager.py --all"
+    volumes:
+      - ./config:/app/config:ro

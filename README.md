@@ -142,6 +142,36 @@ Since Edition Manager only processes libraries of movie type, specify libraries 
 - Python 3.0 or higher installed.
 - Necessary third-party libraries installed using the command `pip install -r requirements.txt`.
 
+## Docker
+
+### Build a local image
+```
+docker build -t p-edition-manager .
+```
+
+### Run the CLI once
+```
+docker run --rm -v "$(pwd)/config:/app/config:ro" p-edition-manager python edition-manager.py --all
+```
+
+### Run on a cron schedule
+```
+docker run --rm \
+  --env EDITION_MANAGER_MODE=cron \
+  --env CRON_SCHEDULE="0 */6 * * *" \
+  --env CRON_COMMAND="python /app/edition-manager.py --all" \
+  -v "$(pwd)/config:/app/config:ro" \
+  p-edition-manager
+```
+
+### Use Docker Compose
+```
+docker compose up edition-manager
+docker compose up edition-manager-cron
+```
+
+The Compose file builds the same image and exposes separate services for on-demand CLI runs and the cron scheduler. Adjust `CRON_SCHEDULE` or volume mounts as needed before starting the cron service.
+
 ## Troubleshooting
 
 ### Common Issues
