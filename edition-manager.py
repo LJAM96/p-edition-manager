@@ -101,38 +101,75 @@ def get_movie_by_rating_key(server, token, rating_key):
 
 # Initialize settings
 def initialize_settings():
-    config_file = Path(__file__).parent / 'config' / 'config.ini'
-    config = ConfigParser()
-    config.read(config_file)
+    # Check if we should use environment variables (when PLEX_URL is set, assume env mode)
+    use_env = os.getenv('PLEX_URL') is not None
 
-    server = config.get('server', 'address')
-    token = config.get('server', 'token')
+    if use_env:
+        # Load all settings from environment variables
+        server = os.getenv('PLEX_URL', 'http://localhost:32400')
+        token = os.getenv('PLEX_TOKEN', '')
 
-    skip_libraries = set(re.split(r'[；;]', config.get('server', 'skip_libraries', fallback=""))) if config.has_option('server', 'skip_libraries') else set()
-    modules = re.split(r'[；;]', config.get('modules', 'order', fallback="")) if config.has_option('modules', 'order') else [
-        "AudioChannels", "AudioCodec", "Bitrate", "ContentRating", "Country", "Cut",
-        "Director", "Duration", "DynamicRange", "FrameRate", "Genre",
-        "Language", "Rating", "Release", "Resolution", "Size",
-        "Source", "SpecialFeatures", "Studio", "VideoCodec"
-    ]
+        skip_libraries_str = os.getenv('PLEX_SKIP_LIBRARIES', '')
+        skip_libraries = set(re.split(r'[；;,]', skip_libraries_str)) if skip_libraries_str else set()
 
-    excluded_languages = set()
-    if config.has_option('language', 'excluded_languages'):
-        excluded_languages = {
-            lang.strip() for lang in re.split(r'[,;]', config.get('language', 'excluded_languages'))
-            if lang.strip()
-        }
+        modules_str = os.getenv('MODULES_ORDER', '')
+        if modules_str:
+            modules = re.split(r'[；;,]', modules_str)
+        else:
+            modules = [
+                "AudioChannels", "AudioCodec", "Bitrate", "ContentRating", "Country", "Cut",
+                "Director", "Duration", "DynamicRange", "FrameRate", "Genre",
+                "Language", "Rating", "Release", "Resolution", "Size",
+                "Source", "SpecialFeatures", "Studio", "VideoCodec"
+            ]
 
-    skip_multiple_audio_tracks = config.getboolean(
-        'language',
-        'skip_multiple_audio_tracks',
-        fallback=False
-    )
+        excluded_languages_str = os.getenv('LANGUAGE_EXCLUDED', '')
+        excluded_languages = {lang.strip() for lang in re.split(r'[,;]', excluded_languages_str) if lang.strip()} if excluded_languages_str else set()
 
-    tmdb_api_key = config.get('rating', 'tmdb_api_key', fallback=None)
+        skip_multiple_audio_tracks = os.getenv('LANGUAGE_SKIP_MULTI_AUDIO', 'false').lower() in ('true', '1', 'yes')
 
-    max_workers = config.getint('performance', 'max_workers', fallback=10)
-    batch_size = config.getint('performance', 'batch_size', fallback=25)
+        tmdb_api_key = os.getenv('TMDB_API_KEY', None)
+
+        max_workers = int(os.getenv('PERFORMANCE_MAX_WORKERS', '10'))
+        batch_size = int(os.getenv('PERFORMANCE_BATCH_SIZE', '25'))
+
+        logger.info("Using configuration from environment variables")
+    else:
+        # Load settings from config.ini file
+        config_file = Path(__file__).parent / 'config' / 'config.ini'
+        config = ConfigParser()
+        config.read(config_file)
+
+        server = config.get('server', 'address')
+        token = config.get('server', 'token')
+
+        skip_libraries = set(re.split(r'[；;]', config.get('server', 'skip_libraries', fallback=""))) if config.has_option('server', 'skip_libraries') else set()
+        modules = re.split(r'[；;]', config.get('modules', 'order', fallback="")) if config.has_option('modules', 'order') else [
+            "AudioChannels", "AudioCodec", "Bitrate", "ContentRating", "Country", "Cut",
+            "Director", "Duration", "DynamicRange", "FrameRate", "Genre",
+            "Language", "Rating", "Release", "Resolution", "Size",
+            "Source", "SpecialFeatures", "Studio", "VideoCodec"
+        ]
+
+        excluded_languages = set()
+        if config.has_option('language', 'excluded_languages'):
+            excluded_languages = {
+                lang.strip() for lang in re.split(r'[,;]', config.get('language', 'excluded_languages'))
+                if lang.strip()
+            }
+
+        skip_multiple_audio_tracks = config.getboolean(
+            'language',
+            'skip_multiple_audio_tracks',
+            fallback=False
+        )
+
+        tmdb_api_key = config.get('rating', 'tmdb_api_key', fallback=None)
+
+        max_workers = config.getint('performance', 'max_workers', fallback=10)
+        batch_size = config.getint('performance', 'batch_size', fallback=25)
+
+        logger.info(f"Using configuration from {config_file}")
 
     try:
         headers = {'X-Plex-Token': token, 'Accept': 'application/json'}

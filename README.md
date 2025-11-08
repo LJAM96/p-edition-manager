@@ -149,14 +149,24 @@ Since Edition Manager only processes libraries of movie type, specify libraries 
 docker build -t p-edition-manager .
 ```
 
-### Run the CLI once
+### Configuration Methods
+
+Edition Manager supports two configuration methods in Docker:
+
+1. **Using config.ini file** (Traditional method)
+2. **Using environment variables** (No config file needed)
+
+### Method 1: Using config.ini file
+
+#### Run the CLI once
 ```
 docker run --rm -v "$(pwd)/config:/app/config:ro" p-edition-manager python edition-manager.py --all
 ```
 
-### Run on a cron schedule
+#### Run on a cron schedule
 ```
 docker run --rm \
+  --user root \
   --env EDITION_MANAGER_MODE=cron \
   --env CRON_SCHEDULE="0 */6 * * *" \
   --env CRON_COMMAND="python /app/edition-manager.py --all" \
@@ -164,13 +174,77 @@ docker run --rm \
   p-edition-manager
 ```
 
-### Use Docker Compose
+### Method 2: Using environment variables
+
+#### Run the CLI once
 ```
-docker compose up edition-manager
-docker compose up edition-manager-cron
+docker run --rm \
+  --env PLEX_URL=http://your-plex-server:32400 \
+  --env PLEX_TOKEN=your_plex_token \
+  --env MODULES_ORDER="Cut,Release,Language" \
+  --env LANGUAGE_EXCLUDED="English" \
+  p-edition-manager python edition-manager.py --all
 ```
 
-The Compose file builds the same image and exposes separate services for on-demand CLI runs and the cron scheduler. Adjust `CRON_SCHEDULE` or volume mounts as needed before starting the cron service.
+#### Run on a cron schedule
+```
+docker run --rm \
+  --user root \
+  --env EDITION_MANAGER_MODE=cron \
+  --env CRON_SCHEDULE="0 */6 * * *" \
+  --env CRON_COMMAND="python /app/edition-manager.py --all" \
+  --env PLEX_URL=http://your-plex-server:32400 \
+  --env PLEX_TOKEN=your_plex_token \
+  --env MODULES_ORDER="Cut,Release,Language" \
+  p-edition-manager
+```
+
+### Environment Variables Reference
+
+When using environment variables, the following options are available:
+
+| Variable | Description | Example | Required |
+|----------|-------------|---------|----------|
+| PLEX_URL | Plex server URL | http://localhost:32400 | Yes (for env mode) |
+| PLEX_TOKEN | Plex authentication token | abc123... | Yes (for env mode) |
+| PLEX_SKIP_LIBRARIES | Libraries to skip (comma-separated) | Library1,Library2 | No |
+| MODULES_ORDER | Modules to use (comma-separated) | Cut,Release,Language | No |
+| LANGUAGE_EXCLUDED | Languages to exclude (comma-separated) | English,French | No |
+| LANGUAGE_SKIP_MULTI_AUDIO | Skip if multiple audio tracks | true | No |
+| TMDB_API_KEY | TMDB API key for IMDB ratings | xyz789... | No |
+| PERFORMANCE_MAX_WORKERS | Number of concurrent threads | 8 | No (default: 10) |
+| PERFORMANCE_BATCH_SIZE | Batch size for processing | 20 | No (default: 25) |
+| EDITION_MANAGER_MODE | Run mode: cli or cron | cron | No (default: cli) |
+| CRON_SCHEDULE | Cron schedule expression | 0 */6 * * * | No (for cron mode) |
+| CRON_COMMAND | Command to run in cron | python /app/edition-manager.py --all | No (for cron mode) |
+
+**Note**: When `PLEX_URL` is set, Edition Manager will use environment variables instead of config.ini.
+
+### Use Docker Compose
+
+The docker-compose.yml file includes multiple examples:
+
+#### Using config.ini with CLI mode:
+```
+docker compose --profile config-file up edition-manager-config-file
+```
+
+#### Using environment variables with CLI mode:
+```
+docker compose --profile env-vars up edition-manager-env
+```
+
+#### Using environment variables with cron mode:
+```
+docker compose --profile cron up edition-manager-cron
+```
+
+#### Using config.ini with cron mode:
+```
+docker compose --profile cron-config-file up edition-manager-cron-config-file
+```
+
+The Compose file includes detailed examples for all configuration methods. Edit the environment variables in docker-compose.yml to match your setup before running.
 
 ## Troubleshooting
 

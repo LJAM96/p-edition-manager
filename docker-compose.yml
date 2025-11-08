@@ -1,7 +1,8 @@
 version: "3.9"
 
 services:
-  edition-manager:
+  # Example 1: Using config.ini file (traditional method)
+  edition-manager-config-file:
     build: .
     image: p-edition-manager:latest
     volumes:
@@ -10,15 +11,86 @@ services:
     command: ["python", "edition-manager.py", "--all"]
     environment:
       EDITION_MANAGER_MODE: cli
+    profiles:
+      - config-file
 
+  # Example 2: Using environment variables (no config.ini needed)
+  edition-manager-env:
+    build: .
+    image: p-edition-manager:latest
+    entrypoint: /usr/local/bin/docker-entrypoint.sh
+    command: ["python", "edition-manager.py", "--all"]
+    environment:
+      # Mode: cli or cron
+      EDITION_MANAGER_MODE: cli
+
+      # Plex Server Configuration
+      PLEX_URL: http://your-plex-server:32400
+      PLEX_TOKEN: your_plex_token_here
+      PLEX_SKIP_LIBRARIES: "Library1,Library2"  # Optional: comma-separated list
+
+      # Modules Configuration
+      MODULES_ORDER: "Cut,Release,Language"  # Optional: comma-separated list
+
+      # Language Module Configuration
+      LANGUAGE_EXCLUDED: "English"  # Optional: comma-separated languages to exclude
+      LANGUAGE_SKIP_MULTI_AUDIO: "true"  # Optional: true/false
+
+      # Rating Module Configuration
+      TMDB_API_KEY: your_tmdb_api_key  # Optional: needed for IMDB ratings
+
+      # Performance Configuration
+      PERFORMANCE_MAX_WORKERS: "8"  # Optional: default is 10
+      PERFORMANCE_BATCH_SIZE: "20"  # Optional: default is 25
+    profiles:
+      - env-vars
+
+  # Example 3: Using environment variables with cron mode
   edition-manager-cron:
     build: .
     image: p-edition-manager:latest
-    user: root
+    user: root  # Required for cron mode
     entrypoint: /usr/local/bin/docker-entrypoint.sh
     environment:
+      # Enable cron mode
       EDITION_MANAGER_MODE: cron
-      CRON_SCHEDULE: "0 */6 * * *"
+      CRON_SCHEDULE: "0 */6 * * *"  # Run every 6 hours
       CRON_COMMAND: "python /app/edition-manager.py --all"
+
+      # Plex Server Configuration
+      PLEX_URL: http://your-plex-server:32400
+      PLEX_TOKEN: your_plex_token_here
+      PLEX_SKIP_LIBRARIES: ""  # Optional: comma-separated list
+
+      # Modules Configuration
+      MODULES_ORDER: "Cut,Release,Language"  # Optional
+
+      # Language Module Configuration
+      LANGUAGE_EXCLUDED: "English"  # Optional
+      LANGUAGE_SKIP_MULTI_AUDIO: "yes"  # Optional: true/false/yes/no/1/0
+
+      # Rating Module Configuration
+      TMDB_API_KEY: ""  # Optional
+
+      # Performance Configuration
+      PERFORMANCE_MAX_WORKERS: "8"
+      PERFORMANCE_BATCH_SIZE: "20"
+    restart: unless-stopped
+    profiles:
+      - cron
+
+  # Example 4: Using config.ini with cron mode
+  edition-manager-cron-config-file:
+    build: .
+    image: p-edition-manager:latest
+    user: root  # Required for cron mode
+    entrypoint: /usr/local/bin/docker-entrypoint.sh
     volumes:
       - ./config:/app/config:ro
+    environment:
+      EDITION_MANAGER_MODE: cron
+      CRON_SCHEDULE: "0 */6 * * *"  # Run every 6 hours
+      CRON_COMMAND: "python /app/edition-manager.py --all"
+    restart: unless-stopped
+    profiles:
+      - cron-config-file
