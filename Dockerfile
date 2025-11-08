@@ -1,5 +1,3 @@
-syntax = docker/dockerfile:1.5
-
 FROM --platform=$TARGETPLATFORM python:3.12-slim-bullseye
 ARG TARGETPLATFORM
 
