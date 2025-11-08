@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.mypy_cache/
+.venv/
+env/
+build/
+dist/
+.git/
+.github/
+*.md
+*.pyc
