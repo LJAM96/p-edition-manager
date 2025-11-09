@@ -1,3 +1,4 @@
 requests
-threading
 PySide6
+flask
+waitress
