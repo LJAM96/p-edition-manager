@@ -62,26 +62,26 @@ Edition Manager uses a modular system where each component extracts specific inf
 
 | Module | Description | Example Output |
 |--------|-------------|----------------|
-| AudioChannels | Audio channel layout | 5.1, 7.1 |
-| AudioCodec | Audio format | Dolby TrueHD, DTS-HD MA |
-| Bitrate | Video bitrate | 24.5 Mbps |
-| ContentRating | Age rating | PG-13, R |
-| Country | Production country | United States, France |
-| Cut | Special cuts | Director's Cut, Extended |
-| Director | Film director | Spielberg |
-| Duration | Movie length | 120 MIN |
-| DynamicRange | HDR information | HDR, Dolby Vision |
-| FrameRate | Frame rate | 24P, 60P |
-| Genre | Primary genre | Drama, Sci-Fi |
-| Language | Audio language | German, Japanese |
-| Rating | IMDB/RT rating | 8.5, 92% |
-| Release | Special releases | Anniversary Edition |
-| Resolution | Video resolution | 4K, 1080P |
-| Size | File size | 58.2 GB |
-| Source | Media source | Remux, Web-DL |
-| SpecialFeatures | Has bonus content | Special Features |
-| Studio | Production studio | Warner Bros. |
-| VideoCodec | Video format | H.264, H.265, AVC |
+| AudioChannels | Audio channel layout | `5.1`, `7.1` |
+| AudioCodec | Audio codec | `Dolby TrueHD`, `DTS-HD MA` |
+| Bitrate | Video bitrate | `24.5 Mbps` |
+| ContentRating | Age rating | `PG-13`, `R` |
+| Country | Production country | `United States`, `France` |
+| Cut | Special cut | `Director’s Cut`, `Extended Edition` |
+| Director | Film director | `Steven Spielberg` |
+| Duration | Runtime | `2h 14m` |
+| DynamicRange | HDR format | `Dolby Vision`, `HDR10+` |
+| FrameRate | Frame rate | `24fps`, `60fps` |
+| Genre | Primary genre | `Drama`, `Sci-Fi` |
+| Language | Audio language | `English`, `Japanese` |
+| Rating | IMDb / Rotten Tomatoes | `8.4`, `92%` |
+| Release | Special release | `Criterion Edition`, `Anniversary Edition` |
+| Resolution | Video resolution | `1080p`, `4K` |
+| Size | File size | `58.2 GB` |
+| Source | Media source | `BluRay`, `Web-DL`, `Remux` |
+| SpecialFeatures | Bonus content | `Special Features` |
+| Studio | Production studio | `Warner Bros.` |
+| VideoCodec | Video format | `H.264`, `H.265` |
 
 [Full Overview of Modules](https://github.com/Entree3k/edition-manager/blob/main/Edition%20Manager%20Modules.md)
 
