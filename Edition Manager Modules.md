@@ -1,9 +1,15 @@
+
 # Edition Manager Modules
 
 Edition Manager offers a total of 20 modules for selection. You can choose any number of modules and arrange them in any order. If certain modules cannot retrieve information, the others will still display correctly. Customize as needed for your Plex library.
 
 ## AudioChannels
 The AudioChannels module retrieves the audio channel configuration information from the movie's media metadata. It displays formats like 2.0 (stereo), 5.1 (surround), 7.1 (extended surround), etc. This module helps users identify movies with superior audio setups for better home theater experiences.
+
+**Example Output:**  
+- `2.0`  
+- `5.1`  
+- `7.1`
 
 ## AudioCodec
 The AudioCodec module supports all audio codecs recognized by Plex. This module retrieves audio codec information from the media metadata. If multiple video files exist, it retrieves audio codec information from the largest file by size. If multiple audio streams exist, it retrieves the audio codec information from the stream with the highest bitrate (preferring multichannel streams). If audio codec information cannot be found, it will not write any audio codec information. Supported audio codecs include but are not limited to:
@@ -27,26 +33,41 @@ The AudioCodec module supports all audio codecs recognized by Plex. This module 
 - **WMAV2**: Windows Media Audio Version 2, a variant of WMA offering higher audio compression rate and lower audio quality.
 - **WMA**: Windows Media Audio, Microsoft's lossy encoding widely used on Windows platforms.
 
+**Example Output:**  
+- `Dolby TrueHD Atmos`  
+- `DTS-HD MA`  
+- `Dolby Digital Plus`
+
 Note: When writing Edition, the audio codec will display the corresponding channel information of the audio stream, such as TRUEHD 7.1, AC3 5.1, AAC Stereo, etc.
 
 ## Bitrate
 The Bitrate module retrieves the bitrate information of video files from the media metadata recognized by Plex. If multiple video files exist, it retrieves the bitrate information from the largest file by size. If bitrate information cannot be found, it will not write any bitrate information (bitrate units are in Kbps, Mbps).
 
+**Example Output:**  
+- `18.2 Mbps`  
+- `950 Kbps`
+
 ## ContentRating
 The ContentRating module extracts the content rating (e.g., G, PG, R) from a movie's metadata in Plex. It converts "Not Rated" to "NR" for brevity. This module displays the age-appropriate rating alongside other movie information, helping users make informed viewing choices.
 Common content ratings:
 
-- **G**: General Audience - Suitable for all ages.
-- **PG**: Parental Guidance Suggested - May contain material unsuitable for young children.
-- **PG-13**: Parents Strongly Cautioned - May be inappropriate for children under 13.
-- **R**: Restricted - Under 17 requires accompanying adult.
-- **NC-17**: Adults Only - No one 17 and under admitted.
-- **NR**: Not Rated - Film hasn't been submitted for a rating or is an uncut version.
+**Example Output:**  
+- `G`: General Audience - Suitable for all ages.
+- `PG`: Parental Guidance Suggested - May contain material unsuitable for young children.
+- `PG-13`: Parents Strongly Cautioned - May be inappropriate for children under 13.
+- `R`: Restricted - Under 17 requires accompanying adult.
+- `NC-17`: Adults Only - No one 17 and under admitted.
+- `NR`: Not Rated - Film hasn't been submitted for a rating or is an uncut version.
 
 Note: The above ratings are based on the U.S. rating system. Ratings systems in other regions may vary.
 
 ## Country
 The Country module retrieves the country (or region) information of movies from the movie metadata. If multiple countries exist, it sequentially writes the country information. If country information cannot be found, it will not write any country information.
+
+**Example Output:**  
+- `United States`  
+- `France`  
+- `South Korea`
 
 ## Cut
 The Cut module currently supports 9 types of cut versions. This module prioritizes matching cut version information based on the movie's filename. If multiple video files exist, it will use the largest file by size for matching. If cut version information cannot be found through filename, it will attempt to match using embedded video titles within the file. If cut version information still cannot be found, it will not write cut version information. The supported cut versions are:
@@ -61,11 +82,25 @@ The Cut module currently supports 9 types of cut versions. This module prioritiz
 - **International Cut**: Adjusted for international markets, which may include subtitles or dubbing, and modifications to address significant cultural differences.
 - **Redux**: A version of the film that typically extends or revises the original by restoring scenes, altering edits, or adding content to offer a different viewing experience from the original release.
 
+**Example Output:**  
+- `Director’s Cut`  
+- `Extended`  
+- `Final Cut`
+
 ## Director
 The Director module extracts the director's name from the movie's metadata. If multiple directors exist, it shows the primary director. This module helps users who organize their libraries by filmmaker, making it easy to identify works by notable directors directly in the Edition field.
 
+**Example Output:**  
+- `Christopher Nolan`
+- `Guillermo del Toro`
+
 ## Duration
 The Duration module retrieves the duration information of video files from the media metadata of movies. If multiple video files exist, it retrieves the duration information from the largest file by size. If duration information cannot be found, it will not write any duration information (duration is measured in minutes).
+
+**Example Output:**  
+- `2h 30m`  
+- `1h 45m`  
+- `28m`
 
 ## DynamicRange
 The DynamicRange module supports all dynamic ranges recognized by Plex. It retrieves dynamic range information from the movie's media metadata. When multiple video files are present, it retrieves information from the largest file by size. If dynamic range information cannot be found, it will not include any dynamic range details. Supported dynamic ranges include but are not limited to:
@@ -75,6 +110,12 @@ The DynamicRange module supports all dynamic ranges recognized by Plex. It retri
 - **DV P5**: Dolby Vision Profile 5 is a single-layer format optimized for streaming, offering superior color encoding compared to P8, ideal for showcasing intricate colors in Dolby Vision-native content.
 - **HDR**: High Dynamic Range enhances brightness and color range of display devices, making images richer and more lifelike, enhancing immersion in viewing.
 - **SDR**: Standard Dynamic Range is the traditional video format, offering limited brightness and color range but widely compatible with various devices.
+
+**Example Output:**  
+- `Dolby Vision`  
+- `Dolby Vision · HDR10`  
+- `HDR10+`  
+- `HDR`
 
 Note: HDR10, HDR10+, HLG, and similar high dynamic range technologies are categorized under HDR. If a video file supports both HDR and DV, both will be included in the Edition.
 
@@ -96,14 +137,31 @@ The FrameRate module supports all frame rates recognized by Plex. This module re
 - **10P**: Displays 10 frames per second, primarily used for very low-bandwidth video transmission and some surveillance cameras.
 - **5P**: Displays 5 frames per second, used for extremely low-bandwidth surveillance and video transmission.
 
+**Example Output:**  
+- `24fps`  
+- `60fps`
+
 ## Genre
 The Genre module displays the primary genre of a film (e.g., Action, Drama, Comedy, Horror) from the movie's metadata. For movies with multiple genres, it displays the first genre listed. This module helps users quickly identify the type of content directly in the Edition field.
+
+**Example Output:**  
+- `Horror`  
+- `Drama`
 
 ## Language
 The Language module retrieves the audio language information from the movie's media metadata. If multiple audio streams exist, it retrieves the language information from the primary audio stream. The module can be configured to exclude specific languages (e.g., English) from being displayed, and to skip showing language information for movies with multiple audio tracks. This helps to highlight non-default languages while keeping the Edition information clean for typical content.
 
+**Example Output:**  
+- `English`  
+- `Japanese`  
+- `French`
+
 ## Rating
 The Rating module fetches movie ratings from either IMDb (via TMDb API) or Rotten Tomatoes, based on user configuration. It adds the selected rating to the movie's edition information in Plex, providing users with quick access to critic or audience scores directly within their Plex interface.
+
+**Example Output:**  
+- `8.4` (IMDb)  
+- `92%` (Rotten Tomatoes)
 
 ## Release
 The Release module currently supports 13 types of release versions. This module prioritizes matching release version information based on the movie's filename. If multiple video files exist, it will use the largest file by size for matching. If release version information cannot be found through filename, it will attempt to match using embedded video titles within the file. If multiple release versions are matched, they will be sequentially written into the release version information. If release version information still cannot be found, it will not write release version information. The supported release versions are:
@@ -122,6 +180,12 @@ The Release module currently supports 13 types of release versions. This module 
 - **Director's Signature Edition**: Endorsed and personally signed by the director, often including exclusive director's commentaries and special features, with high collectible value.
 - **Criterion Collection**: Distributed by Criterion Collection, focusing on high-quality film restoration and special additional content, targeting film enthusiasts and collectors.
 
+**Example Output:**  
+- `Criterion`  
+- `Arrow Video`  
+- `Shout Factory`  
+- `Anniversary Edition`
+
 ## Resolution
 The Resolution module supports all resolutions recognized by Plex. This module retrieves video resolution information from the media metadata. If multiple video files exist, it retrieves resolution information from the largest file by size. If resolution information cannot be found, it will not write any resolution information. Supported resolutions include but are not limited to:
 
@@ -135,8 +199,26 @@ The Resolution module supports all resolutions recognized by Plex. This module r
 - **480P**: Including 640 x 480 (NTSC), 848 x 480, and 854 x 480, among others.
 - **SD**: Including resolutions below 480P, such as 360 x 240, 426 x 240, 480 x 360, and 640 x 360, among others.
 
+**Example Output:**  
+- `4K`  
+- `1080p`
+
+## ShortFilm
+The ShortFilm module determines whether a movie qualifies as a *short film* based on its total duration.  
+It analyzes the movie's runtime using Plex metadata and automatically tags titles under **40 minutes** as “Short Film.”  
+This makes it easy to distinguish short-form works, independent shorts, or festival entries from feature-length movies within your Plex library.
+
+If a movie exceeds this threshold, the module remains silent (it won’t display anything).
+
+**Example Outputs:**
+- `Short Film` — (for films under 40 minutes)
+
 ## Size
 The Size module retrieves the size information of video files from the media metadata. If multiple video files exist, it retrieves the size information from the largest file by size (size units are in B, KB, MB, GB).
+
+**Example Output:**  
+- `56.2 GB`  
+- `742 MB`
 
 ## Source
 The Source module currently supports 25 types of source versions. This module prioritizes matching source version information based on the movie's filename. If multiple video files exist, it will use the largest file by size for matching. If source version information cannot be found through filename, it will attempt to match using embedded video titles within the file. If source version information still cannot be found, it will not write source version information. The supported source versions are:
@@ -167,11 +249,24 @@ The Source module currently supports 25 types of source versions. This module pr
 - **TS**: Version recorded using professional cameras in a movie theater, relatively good audio quality but lower video quality.
 - **CAM**: Version recorded using standard cameras in a movie theater, very poor video and audio quality.
 
+**Example Output:**  
+- `REMUX`  
+- `WEB-DL`  
+- `BluRay`
+
 ## SpecialFeatures
 The SpecialFeatures module checks if a movie contains any extras or bonus content in Plex. If extras exist, it adds "Special Features" to the Edition information, helping users identify movies with supplementary content without needing to check each title individually.
 
+**Example Output:**  
+- `Behind The Scenes`
+- `Gag Reel`
+
 ## Studio
 The Studio module displays the production studio (e.g., Warner Bros., Universal, A24) from the movie's metadata. This helps users identify content from their favorite studios or production companies directly in the Edition field.
+
+**Example Output:**  
+- `Warner Bros.`  
+- `A24`
 
 ## VideoCodec
 The VideoCodec module supports all video codecs recognized by Plex. This module retrieves video codec information from the media metadata. If multiple video files exist, it retrieves codec information from the largest file by size. If codec information cannot be found, it will not write any codec information. Supported video codecs include but are not limited to:
@@ -189,3 +284,20 @@ The VideoCodec module supports all video codecs recognized by Plex. This module 
 - **MPEG2**: Also known as H.262, a standard codec for DVDs and some TV broadcasts, known for lower compression efficiency.
 - **MPEG1**: An early video compression format, commonly used for VCDs, known for very low compression efficiency.
 - **RV40**: RealVideo 4.0, a codec developed by RealNetworks, known for lower compression efficiency.
+
+**Example Output:**  
+- `H.264`  
+- `H.265`  
+- `AV1`
+
+## Writer
+The Writer module extracts the names of the movie’s credited screenwriters from Plex metadata.  
+If multiple writers are listed, it retrieves the **first credited writer** to keep Edition entries concise and readable.  
+This module helps highlight creative contributors, particularly useful for users who organize libraries by writer or creative team.
+
+If no writer information is found in the metadata, the module will not add anything to the Edition field.
+
+**Example Outputs:**
+- `Quentin Tarantino`
+- `Greta Gerwig`
+- `Christopher Nolan`
