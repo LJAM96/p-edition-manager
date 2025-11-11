@@ -92,6 +92,10 @@ Backup Edition metadata `python edition_manager.py --backup`
 
 Restore metadata from backup `python edition_manager.py --restore`
 
+Restore from a specific file `python edition_manager.py --restore-file <file_name>`
+
+List available backups `python edition_manager.py --list-backups`
+
 ## Configuration
 
 Edit the `config/config.ini` file to customize Edition Manager.
