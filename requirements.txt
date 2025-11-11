@@ -1,2 +1,4 @@
 requests
 PySide6
+flask
+waitress

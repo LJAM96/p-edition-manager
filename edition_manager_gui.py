@@ -5,11 +5,11 @@ import configparser
 import random
 import requests
 from pathlib import Path
-
+from collections import deque
 from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QProcess
 
-APP_TITLE = "Edition Manager"
+APP_TITLE = "🎬 Edition Manager"
 
 _version = "v1.9.0"
 _msg_file = Path(__file__).parent / "assets" / "messages.txt"
@@ -28,7 +28,7 @@ if _msg_file.exists():
         _tagline = None
 
 APP_VERSION = f"{_version} - {_tagline}" if _tagline else _version
-PRIMARY_SCRIPT = "edition-manager.py"
+PRIMARY_SCRIPT = "edition_manager.py"
 CONFIG_FILE = str(Path(__file__).parent / "config" / "config.ini")
 
 DEFAULT_MODULES = [
@@ -125,7 +125,7 @@ class ProcessWorker(QtCore.QObject):
         data = self.proc.readAllStandardOutput().data().decode(errors="replace")
         for raw in data.splitlines():
             s = raw.rstrip("\n")
-            self.line.emit(s)
+
             if s.startswith("PROGRESS "):
                 try:
                     pct = int(s.split()[1])
@@ -133,6 +133,9 @@ class ProcessWorker(QtCore.QObject):
                     self.progress.emit(pct)
                 except Exception:
                     pass
+                continue
+
+            self.line.emit(s)
 
     @QtCore.Slot(int, QtCore.QProcess.ExitStatus)
     def _done(self, code: int, _status):
@@ -182,9 +185,11 @@ class SettingsDialog(QtWidgets.QDialog):
         self.cfg = configparser.ConfigParser()
         if os.path.exists(CONFIG_FILE):
             self.cfg.read(CONFIG_FILE)
-        for sec in ("server","modules","language","rating","performance","appearance"):
+        for sec in ("server","modules","language","rating","performance","appearance","webhook"):
             if not self.cfg.has_section(sec):
                 self.cfg.add_section(sec)
+        if not self.cfg.has_option("webhook","enabled"):
+            self.cfg.set("webhook","enabled","no")
 
         # --- Server tab ---
         server = QtWidgets.QWidget(); tabs.addTab(server, "Server")
@@ -199,6 +204,15 @@ class SettingsDialog(QtWidgets.QDialog):
         form.addRow("Token", self.server_token)
         form.addRow("Skip Libraries", self.skip_libraries)
         form.addRow(QtWidgets.QLabel("Use semicolons to separate library names"))
+
+        # --- Webhook enable ---
+        hook_group = QtWidgets.QGroupBox("Webhook")
+        hook_layout = QtWidgets.QHBoxLayout(hook_group)
+        self.webhook_enabled = QtWidgets.QCheckBox("Enable webhook server (start with GUI)")
+        self.webhook_enabled.setChecked(self.cfg.get("webhook","enabled",fallback="no").lower() in ("1","true","yes","on"))
+        hook_layout.addWidget(self.webhook_enabled)
+        form.addRow(hook_group)
+        self._webhook_proc = None
 
         tool_row = QtWidgets.QHBoxLayout()
         tool_row.setContentsMargins(0,0,0,0)
@@ -531,6 +545,8 @@ class SettingsDialog(QtWidgets.QDialog):
 
         cfg_dir = Path(CONFIG_FILE).parent
         cfg_dir.mkdir(parents=True, exist_ok=True)
+        self.cfg.set("webhook","enabled", "yes" if self.webhook_enabled.isChecked() else "no")
+        
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             self.cfg.write(f)
         self.accept()
@@ -645,6 +661,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(f"{APP_TITLE} for Plex")
         self.resize(980, 720)
 
+        self._webhook_proc = None
+        QtCore.QTimer.singleShot(0, self._apply_webhook_state)
+
         # Set window icon (top-left & taskbar)
         icon_path = Path(__file__).parent / "assets" / "icon.png"
         if icon_path.exists():
@@ -678,14 +697,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_reset = QtWidgets.QPushButton("Reset All Movies"); self.btn_reset.setObjectName("Outlined")
         self.btn_backup = QtWidgets.QPushButton("Backup Editions"); self.btn_backup.setObjectName("Outlined")
         self.btn_restore = QtWidgets.QPushButton("Restore Editions"); self.btn_restore.setObjectName("Outlined")
+        self.btn_restore_file = QtWidgets.QPushButton("Restore from file…"); self.btn_restore_file.setObjectName("Outlined")
         self.btn_settings = QtWidgets.QPushButton("Settings"); self.btn_settings.setObjectName("Outlined")
 
         ag.addWidget(self.btn_all,    0, 0)
         ag.addWidget(self.btn_one,    0, 1)
-        ag.addWidget(self.btn_reset,  0, 2)
-        ag.addWidget(self.btn_backup, 0, 3)
-        ag.addWidget(self.btn_restore,0, 4)
-        ag.addWidget(self.btn_settings,0,5)
+        ag.addWidget(self.btn_reset,  1, 0)
+        ag.addWidget(self.btn_backup, 0, 2)
+        ag.addWidget(self.btn_restore,1, 2)
+        ag.addWidget(self.btn_restore_file, 1, 1)
+        ag.addWidget(self.btn_settings,0,3)
         root.addWidget(actions_group)
 
         # ---- Section: Progress ----
@@ -695,9 +716,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pg = QtWidgets.QGridLayout(prog_group)
         pg.setContentsMargins(16, 16, 16, 16)
         self.progress = QtWidgets.QProgressBar(); self.progress.setRange(0, 100); self.progress.setValue(0)
-        self.percent_lab = QtWidgets.QLabel("0%")
         pg.addWidget(self.progress, 0, 0, 1, 1)
-        pg.addWidget(self.percent_lab, 1, 0, 1, 1, alignment=Qt.AlignLeft)
         root.addWidget(prog_group)
 
         # ---- Section: Status ----
@@ -745,6 +764,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_reset.clicked.connect(lambda: self.run_flag("--reset"))
         self.btn_backup.clicked.connect(lambda: self.run_flag("--backup"))
         self.btn_restore.clicked.connect(lambda: self.run_flag("--restore"))
+        self.btn_restore_file.clicked.connect(self._restore_from_file)
         self.btn_cancel.clicked.connect(self.cancel_current_operation)
 
         # Timer to update percent label
@@ -755,6 +775,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._current_worker = None
 
         self._apply_styles()
+        self._apply_webhook_state()
 
     def cancel_current_operation(self):
         """Cancel the currently running background process."""
@@ -906,6 +927,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     apply_light_palette(app, self.primary_color)
 
             self._apply_styles()
+            self._apply_webhook_state()
 
     # --- Process execution ---
     def run_flag(self, flag: str):
@@ -956,8 +978,128 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status.verticalScrollBar().setValue(self.status.verticalScrollBar().maximum())
 
     def _set_buttons_enabled(self, enabled: bool):
-        for b in (self.btn_one, self.btn_all, self.btn_reset, self.btn_backup, self.btn_restore, self.btn_settings):
+        for b in (self.btn_one, self.btn_all, self.btn_reset, self.btn_backup, self.btn_restore, self.btn_restore_file, self.btn_settings):
             b.setEnabled(enabled)
+
+    def _webhook_cmd(self):
+        return [sys.executable, str(Path(__file__).parent / "webhook_server.py")]
+
+    def _webhook_enabled_in_cfg(self) -> bool:
+        self.cfg.read(CONFIG_FILE)
+        return self.cfg.get("webhook","enabled", fallback="no").lower() in ("1","true","yes","on")
+
+    def _apply_webhook_state(self):
+        if self._webhook_enabled_in_cfg():
+            self._start_webhook()
+        else:
+            self._stop_webhook()
+
+    def _init_webhook_log_filter(self):
+        if getattr(self, "_webhook_filter_ready", False):
+            return
+
+        import re
+        from collections import deque
+
+        # Patterns to ignore in the GUI
+        self._webhook_drop_patterns = [
+            re.compile(r"^INFO:edition_manager:", re.IGNORECASE),
+            re.compile(r"\bProcessing ratingKey=", re.IGNORECASE),
+            re.compile(r"^PROGRESS\b", re.IGNORECASE),
+        ]
+
+        self._webhook_connected_pat = re.compile(r"Successfully connected to server:", re.IGNORECASE)
+        self._webhook_seen_connected = False  # once-only flag
+
+        self._webhook_recent = deque(maxlen=100)
+
+        self._webhook_filter_ready = True
+
+    def _should_show_webhook_line(self, line: str) -> bool:
+        s = line.strip()
+        if not s:
+            return False
+        for pat in self._webhook_drop_patterns:
+            if pat.search(s):
+                return False
+
+        if s in self._webhook_recent:
+            return False
+        self._webhook_recent.append(s)
+        return True
+
+    def _start_webhook(self):
+        if not self._webhook_enabled_in_cfg():
+            return
+        if self._webhook_proc and self._webhook_proc.state() != QtCore.QProcess.NotRunning:
+            return
+
+        self.append_status("Starting webhook server…")
+
+        self._webhook_proc = QtCore.QProcess(self)
+        self._webhook_proc.setWorkingDirectory(str(Path(__file__).parent))
+        self._webhook_proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
+
+        if sys.platform.startswith("win"):
+            def _no_console(args):
+                args["creationFlags"] = 0x08000000
+            try:
+                self._webhook_proc.setCreateProcessArgumentsModifier(_no_console)
+            except Exception:
+                pass
+
+        self._webhook_proc.readyReadStandardOutput.connect(self._on_webhook_output)
+        self._webhook_proc.finished.connect(self._on_webhook_finished)
+
+        cmd = self._webhook_cmd()
+        self._webhook_proc.start(cmd[0], cmd[1:])
+
+    @QtCore.Slot()
+    def _on_webhook_output(self):
+        self._init_webhook_log_filter()
+
+        if not self._webhook_proc:
+            return
+
+        data = self._webhook_proc.readAllStandardOutput().data().decode(errors="replace")
+        for raw in data.splitlines():
+            line = raw.rstrip("\r\n")
+
+            if self._should_show_webhook_line(line):
+                self.append_status(f"[webhook] {line}")
+
+    def _restore_from_file(self):
+        start_dir = str((Path(__file__).parent / "metadata_backup").resolve())
+        dlg = QtWidgets.QFileDialog(self, "Choose Edition Manager backup")
+        dlg.setFileMode(QtWidgets.QFileDialog.ExistingFile)
+        dlg.setNameFilters(["JSON Backups (*.json)", "All Files (*)"])
+        dlg.setDirectory(start_dir)
+
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            paths = dlg.selectedFiles()
+            if paths:
+                path = paths[0]
+                # call CLI with explicit file path
+                self.run_flag(f"--restore-file={path}")
+
+    @QtCore.Slot(int, QtCore.QProcess.ExitStatus)
+    def _on_webhook_finished(self, code: int, _status):
+        self.append_status(f"Webhook server stopped (exit={code}).")
+
+    def _stop_webhook(self):
+        if self._webhook_proc and self._webhook_proc.state() != QtCore.QProcess.NotRunning:
+            self._webhook_proc.terminate()
+            if not self._webhook_proc.waitForFinished(2000):
+                self._webhook_proc.kill()
+                self._webhook_proc.waitForFinished(2000)
+        self._webhook_proc = None
+
+    def closeEvent(self, e: QtGui.QCloseEvent):
+        # ensures webhook dies with the GUI
+        try:
+            self._stop_webhook()
+        finally:
+            super().closeEvent(e)
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
