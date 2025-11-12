@@ -29,7 +29,7 @@ COPY --chown=app:app requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=app:app config config
-COPY --chown=app:app edition-manager.py edition-manager-gui.py edition-manager-gui.sh modules/ ./
+COPY --chown=app:app edition_manager.py edition_manager_gui.pyw edition_manager_gui.sh modules/ ./
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY edition-manager-cron.sh /usr/local/bin/edition-manager-cron.sh
 
