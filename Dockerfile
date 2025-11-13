@@ -37,5 +37,3 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/edition-manager-
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "edition-manager.py"]
-
-USER app
