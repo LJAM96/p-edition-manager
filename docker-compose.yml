@@ -7,8 +7,9 @@ services:
     image: p-edition-manager:latest
     volumes:
       - ./config:/app/config:ro
+      - ./metadata_backup:/app/metadata_backup
     entrypoint: /usr/local/bin/docker-entrypoint.sh
-    command: ["python", "edition-manager.py", "--all"]
+    command: ["python", "edition_manager.py", "--all"]
     environment:
       EDITION_MANAGER_MODE: cli
     profiles:
@@ -18,8 +19,10 @@ services:
   edition-manager-env:
     build: .
     image: p-edition-manager:latest
+    volumes:
+      - ./metadata_backup:/app/metadata_backup
     entrypoint: /usr/local/bin/docker-entrypoint.sh
-    command: ["python", "edition-manager.py", "--all"]
+    command: ["python", "edition_manager.py", "--all"]
     environment:
       # Mode: cli or cron
       EDITION_MANAGER_MODE: cli
@@ -50,12 +53,14 @@ services:
     build: .
     image: p-edition-manager:latest
     user: root  # Required for cron mode
+    volumes:
+      - ./metadata_backup:/app/metadata_backup
     entrypoint: /usr/local/bin/docker-entrypoint.sh
     environment:
       # Enable cron mode
       EDITION_MANAGER_MODE: cron
       CRON_SCHEDULE: "0 */6 * * *"  # Run every 6 hours
-      CRON_COMMAND: "python /app/edition-manager.py --all"
+      CRON_COMMAND: "python /app/edition_manager.py --all"
 
       # Plex Server Configuration
       PLEX_URL: http://your-plex-server:32400
@@ -87,10 +92,61 @@ services:
     entrypoint: /usr/local/bin/docker-entrypoint.sh
     volumes:
       - ./config:/app/config:ro
+      - ./metadata_backup:/app/metadata_backup
     environment:
       EDITION_MANAGER_MODE: cron
       CRON_SCHEDULE: "0 */6 * * *"  # Run every 6 hours
-      CRON_COMMAND: "python /app/edition-manager.py --all"
+      CRON_COMMAND: "python /app/edition_manager.py --all"
     restart: unless-stopped
     profiles:
       - cron-config-file
+
+  # Example 5: Web UI mode with config.ini
+  edition-manager-webui-config:
+    build: .
+    image: p-edition-manager:latest
+    volumes:
+      - ./config:/app/config:ro
+      - ./metadata_backup:/app/metadata_backup
+    entrypoint: /usr/local/bin/docker-entrypoint.sh
+    ports:
+      - "5000:5000"  # Access web UI at http://localhost:5000
+    environment:
+      EDITION_MANAGER_MODE: webui
+    restart: unless-stopped
+    profiles:
+      - webui-config
+
+  # Example 6: Web UI mode with environment variables
+  edition-manager-webui:
+    build: .
+    image: p-edition-manager:latest
+    volumes:
+      - ./metadata_backup:/app/metadata_backup
+    entrypoint: /usr/local/bin/docker-entrypoint.sh
+    ports:
+      - "5000:5000"  # Access web UI at http://localhost:5000
+    environment:
+      EDITION_MANAGER_MODE: webui
+
+      # Plex Server Configuration
+      PLEX_URL: http://your-plex-server:32400
+      PLEX_TOKEN: your_plex_token_here
+      PLEX_SKIP_LIBRARIES: "Library1,Library2"  # Optional: comma-separated list
+
+      # Modules Configuration
+      MODULES_ORDER: "Cut,Release,Language"  # Optional: comma-separated list
+
+      # Language Module Configuration
+      LANGUAGE_EXCLUDED: "English"  # Optional: comma-separated languages to exclude
+      LANGUAGE_SKIP_MULTI_AUDIO: "true"  # Optional: true/false
+
+      # Rating Module Configuration
+      TMDB_API_KEY: your_tmdb_api_key  # Optional: needed for IMDB ratings
+
+      # Performance Configuration
+      PERFORMANCE_MAX_WORKERS: "8"  # Optional: default is 10
+      PERFORMANCE_BATCH_SIZE: "20"  # Optional: default is 25
+    restart: unless-stopped
+    profiles:
+      - webui
